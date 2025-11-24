@@ -54,6 +54,11 @@ impl Visualizer {
         self.viz_type
     }
     
+    /// Get spectrum data for external rendering
+    pub fn get_spectrum(&self) -> &[f32] {
+        &self.spectrum
+    }
+    
     /// Update with new audio samples
     pub fn update(&mut self, audio_samples: &[f32]) {
         if audio_samples.is_empty() {
@@ -333,5 +338,25 @@ mod tests {
         // Should still be valid
         assert_eq!(visualizer.samples.len(), 256);
         assert_eq!(visualizer.spectrum.len(), 64);
+    }
+    
+    #[test]
+    fn test_get_spectrum() {
+        let mut visualizer = Visualizer::new();
+        
+        // Create test samples
+        let samples: Vec<f32> = (0..512).map(|i| (i as f32 * 0.1).sin()).collect();
+        visualizer.update(&samples);
+        
+        // Get spectrum
+        let spectrum = visualizer.get_spectrum();
+        
+        // Should return the spectrum slice
+        assert_eq!(spectrum.len(), 64);
+        
+        // Spectrum values should be normalized
+        for &val in spectrum {
+            assert!(val >= 0.0 && val <= 1.0, "Spectrum value out of range: {}", val);
+        }
     }
 }

@@ -12,7 +12,6 @@ mod theme;
 use theme::Theme;
 
 mod track_display;
-use track_display::TrackDisplay;
 
 mod ui_components;
 
@@ -138,51 +137,58 @@ impl OneAmpApp {
     }
     
     fn process_audio_events(&mut self) {
+        // Collect all events first to avoid borrow checker issues
+        let mut events = Vec::new();
         if let Some(ref engine) = self.audio_engine {
             while let Some(event) = engine.try_recv_event() {
-                match event {
-                    AudioEvent::TrackLoaded(track_info) => {
-                        self.current_track = Some(track_info);
-                        self.error_message = None;
-                    }
-                    AudioEvent::Playing => {
-                        self.playback_state = PlaybackState::Playing;
-                    }
-                    AudioEvent::Paused => {
-                        self.playback_state = PlaybackState::Paused;
-                    }
-                    AudioEvent::Stopped => {
-                        self.playback_state = PlaybackState::Stopped;
-                        self.current_position = 0.0;
-                    }
-                    AudioEvent::Position(current, total) => {
-                        self.current_position = current;
-                        self.total_duration = total;
-                    }
-                    AudioEvent::Finished => {
-                        self.playback_state = PlaybackState::Stopped;
-                        self.current_position = 0.0;
-                        if !self.playlist.is_empty() {
-                            self.play_next();
-                        }
-                    }
-                    AudioEvent::RequestNext => {
+                events.push(event);
+            }
+        }
+        
+        // Process events
+        for event in events {
+            match event {
+                AudioEvent::TrackLoaded(track_info) => {
+                    self.current_track = Some(track_info);
+                    self.error_message = None;
+                }
+                AudioEvent::Playing => {
+                    self.playback_state = PlaybackState::Playing;
+                }
+                AudioEvent::Paused => {
+                    self.playback_state = PlaybackState::Paused;
+                }
+                AudioEvent::Stopped => {
+                    self.playback_state = PlaybackState::Stopped;
+                    self.current_position = 0.0;
+                }
+                AudioEvent::Position(current, total) => {
+                    self.current_position = current;
+                    self.total_duration = total;
+                }
+                AudioEvent::Finished => {
+                    self.playback_state = PlaybackState::Stopped;
+                    self.current_position = 0.0;
+                    if !self.playlist.is_empty() {
                         self.play_next();
                     }
-                    AudioEvent::RequestPrevious => {
-                        self.play_previous();
-                    }
-                    AudioEvent::EqualizerUpdated(enabled, gains) => {
-                        self.eq_enabled = enabled;
-                        self.eq_gains = gains;
-                    }
-                    AudioEvent::VisualizationData(samples) => {
-                        self.visualizer.update(&samples);
-                    }
-                    AudioEvent::Error(msg) => {
-                        self.error_message = Some(msg);
-                        self.playback_state = PlaybackState::Stopped;
-                    }
+                }
+                AudioEvent::RequestNext => {
+                    self.play_next();
+                }
+                AudioEvent::RequestPrevious => {
+                    self.play_previous();
+                }
+                AudioEvent::EqualizerUpdated(enabled, gains) => {
+                    self.eq_enabled = enabled;
+                    self.eq_gains = gains;
+                }
+                AudioEvent::VisualizationData(samples) => {
+                    self.visualizer.update(&samples);
+                }
+                AudioEvent::Error(msg) => {
+                    self.error_message = Some(msg);
+                    self.playback_state = PlaybackState::Stopped;
                 }
             }
         }

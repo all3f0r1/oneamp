@@ -9,7 +9,7 @@ pub fn render_player_section(
     theme: &Theme,
     current_track: &Option<TrackInfo>,
     current_position: f32,
-    total_duration: f32,
+    _total_duration: f32,
     visualizer_data: &[f32],
     scroll_offset: &mut usize,
 ) {
@@ -312,7 +312,7 @@ pub struct PlaylistActions {
 
 pub fn render_playlist(
     ui: &mut egui::Ui,
-    theme: &Theme,
+    _theme: &Theme,
     playlist: &[std::path::PathBuf],
     current_track_index: Option<usize>,
     selected_track_index: Option<usize>,

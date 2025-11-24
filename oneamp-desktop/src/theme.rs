@@ -218,10 +218,89 @@ mod tests {
     }
     
     #[test]
+    fn test_winamp_modern_theme() {
+        let theme = Theme::winamp_modern();
+        assert_eq!(theme.name, "Winamp Modern");
+        assert_eq!(theme.colors.window_bg, [40, 45, 55]);
+        assert_eq!(theme.fonts.timer_size, 32.0);
+        assert_eq!(theme.layout.window_min_width, 600.0);
+    }
+    
+    #[test]
+    fn test_dark_theme() {
+        let theme = Theme::dark();
+        assert_eq!(theme.name, "Dark");
+        assert_eq!(theme.colors.window_bg, [30, 30, 35]);
+    }
+    
+    #[test]
     fn test_theme_serialization() {
         let theme = Theme::winamp_modern();
         let toml = toml::to_string(&theme).unwrap();
         let deserialized: Theme = toml::from_str(&toml).unwrap();
         assert_eq!(theme.name, deserialized.name);
+        assert_eq!(theme.colors.window_bg, deserialized.colors.window_bg);
+        assert_eq!(theme.fonts.timer_size, deserialized.fonts.timer_size);
+    }
+    
+    #[test]
+    fn test_color32_conversion() {
+        let rgb = [100, 150, 200];
+        let color = Theme::color32(&rgb);
+        assert_eq!(color.r(), 100);
+        assert_eq!(color.g(), 150);
+        assert_eq!(color.b(), 200);
+    }
+    
+    #[test]
+    fn test_theme_save_load() {
+        use std::path::PathBuf;
+        use std::fs;
+        
+        let theme = Theme::winamp_modern();
+        let temp_path = PathBuf::from("/tmp/test_theme.toml");
+        
+        // Save
+        theme.save(&temp_path).unwrap();
+        
+        // Load
+        let loaded = Theme::load(&temp_path).unwrap();
+        assert_eq!(theme.name, loaded.name);
+        
+        // Cleanup
+        let _ = fs::remove_file(temp_path);
+    }
+    
+    #[test]
+    fn test_all_themes_have_valid_colors() {
+        for theme in [Theme::winamp_modern(), Theme::dark()] {
+            // All RGB values should be 0-255
+            for &val in &theme.colors.window_bg {
+                assert!(val <= 255);
+            }
+            for &val in &theme.colors.display_text {
+                assert!(val <= 255);
+            }
+        }
+    }
+    
+    #[test]
+    fn test_font_sizes_are_positive() {
+        let theme = Theme::default();
+        assert!(theme.fonts.timer_size > 0.0);
+        assert!(theme.fonts.track_info_size > 0.0);
+        assert!(theme.fonts.playlist_size > 0.0);
+        assert!(theme.fonts.button_size > 0.0);
+    }
+    
+    #[test]
+    fn test_layout_dimensions_are_positive() {
+        let theme = Theme::default();
+        assert!(theme.layout.window_min_width > 0.0);
+        assert!(theme.layout.window_min_height > 0.0);
+        assert!(theme.layout.player_height > 0.0);
+        assert!(theme.layout.equalizer_height > 0.0);
+        assert!(theme.layout.spacing >= 0.0);
+        assert!(theme.layout.padding >= 0.0);
     }
 }
