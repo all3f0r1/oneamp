@@ -240,7 +240,7 @@ pub fn render_control_buttons(
 /// Render equalizer section
 pub fn render_equalizer(
     ui: &mut egui::Ui,
-    theme: &Theme,
+    _theme: &Theme,
     eq_enabled: &mut bool,
     eq_gains: &mut Vec<f32>,
     eq_frequencies: &[f32],
@@ -312,7 +312,7 @@ pub struct PlaylistActions {
 
 pub fn render_playlist(
     ui: &mut egui::Ui,
-    _theme: &Theme,
+    theme: &Theme,
     playlist: &[std::path::PathBuf],
     current_track_index: Option<usize>,
     selected_track_index: Option<usize>,

@@ -481,16 +481,21 @@ impl eframe::App for OneAmpApp {
         });
         
         // Error message toast
+        let mut clear_error = false;
         if let Some(ref msg) = self.error_message {
+            let msg_clone = msg.clone();
             egui::Window::new("Error")
                 .collapsible(false)
                 .resizable(false)
                 .show(ctx, |ui| {
-                    ui.label(msg);
+                    ui.label(&msg_clone);
                     if ui.button("OK").clicked() {
-                        self.error_message = None;
+                        clear_error = true;
                     }
                 });
+        }
+        if clear_error {
+            self.error_message = None;
         }
     }
 }
