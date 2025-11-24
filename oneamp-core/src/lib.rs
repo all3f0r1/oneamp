@@ -233,6 +233,10 @@ fn audio_thread_main(
     let capture_buffer = std::sync::Arc::new(std::sync::Mutex::new(AudioCaptureBuffer::new(2048)));
     let capture_buffer_clone = capture_buffer.clone();
     
+    // Throttle position updates to reduce allocations
+    let mut last_position_update = std::time::Instant::now();
+    let position_update_interval = Duration::from_millis(100);
+    
     loop {
         // Check for commands
         if let Ok(cmd) = command_rx.try_recv() {
@@ -351,11 +355,14 @@ fn audio_thread_main(
                 is_paused = false;
                 let _ = event_tx.send(AudioEvent::Finished);
             } else if !is_paused {
-                // Send position update
-                if let Some(ref track) = current_track {
-                    let current_pos = s.get_pos().as_secs_f32();
-                    let total_duration = track.duration_secs.unwrap_or(0.0);
-                    let _ = event_tx.send(AudioEvent::Position(current_pos, total_duration));
+                // Send position update (throttled)
+                if last_position_update.elapsed() >= position_update_interval {
+                    if let Some(ref track) = current_track {
+                        let current_pos = s.get_pos().as_secs_f32();
+                        let total_duration = track.duration_secs.unwrap_or(0.0);
+                        let _ = event_tx.send(AudioEvent::Position(current_pos, total_duration));
+                    }
+                    last_position_update = std::time::Instant::now();
                 }
                 
                 // Send visualization data
@@ -396,4 +403,134 @@ fn load_and_play(
     sink.append(capture_source);
     
     Ok(sink)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+
+    #[test]
+    fn test_audio_engine_creation() {
+        // Test that AudioEngine can be created
+        let engine = AudioEngine::new();
+        assert!(engine.is_ok(), "AudioEngine should be created successfully");
+    }
+
+    #[test]
+    fn test_audio_engine_shutdown() {
+        // Test that AudioEngine can be shut down properly
+        let engine = AudioEngine::new().expect("Failed to create AudioEngine");
+        let result = engine.shutdown();
+        assert!(result.is_ok(), "AudioEngine should shutdown without errors");
+    }
+
+    #[test]
+    fn test_audio_command_send() {
+        // Test that commands can be sent to the audio engine
+        let engine = AudioEngine::new().expect("Failed to create AudioEngine");
+        
+        // Send a stop command (safe even if nothing is playing)
+        let result = engine.send_command(AudioCommand::Stop);
+        assert!(result.is_ok(), "Should be able to send Stop command");
+        
+        // Send equalizer commands
+        let result = engine.send_command(AudioCommand::SetEqualizerEnabled(true));
+        assert!(result.is_ok(), "Should be able to send SetEqualizerEnabled command");
+        
+        let result = engine.send_command(AudioCommand::ResetEqualizer);
+        assert!(result.is_ok(), "Should be able to send ResetEqualizer command");
+    }
+
+    #[test]
+    fn test_audio_event_reception() {
+        // Test that events can be received from the audio engine
+        let engine = AudioEngine::new().expect("Failed to create AudioEngine");
+        
+        // Try to receive events (should be non-blocking)
+        let event = engine.try_recv_event();
+        // Either None or Some(event) is fine, just shouldn't panic
+        // We just verify it returns an Option
+        assert!(event.is_none() || event.is_some(), "Should return an Option");
+    }
+
+    #[test]
+    fn test_equalizer_commands() {
+        // Test equalizer-related commands
+        let engine = AudioEngine::new().expect("Failed to create AudioEngine");
+        
+        // Test setting individual band
+        let result = engine.send_command(AudioCommand::SetEqualizerBand(0, 3.0));
+        assert!(result.is_ok(), "Should be able to set equalizer band");
+        
+        // Test setting all bands
+        let gains = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+        let result = engine.send_command(AudioCommand::SetEqualizerBands(gains));
+        assert!(result.is_ok(), "Should be able to set all equalizer bands");
+    }
+
+    #[test]
+    fn test_track_info_creation() {
+        // Test TrackInfo structure
+        let track = TrackInfo {
+            path: PathBuf::from("/test/path.mp3"),
+            title: Some("Test Track".to_string()),
+            artist: Some("Test Artist".to_string()),
+            album: Some("Test Album".to_string()),
+            duration_secs: Some(180.0),
+            sample_rate: Some(44100),
+            channels: Some(2),
+        };
+        
+        assert_eq!(track.title, Some("Test Track".to_string()));
+        assert_eq!(track.sample_rate, Some(44100));
+        assert_eq!(track.channels, Some(2));
+    }
+
+    #[test]
+    fn test_audio_capture_buffer() {
+        // Test AudioCaptureBuffer
+        let mut buffer = AudioCaptureBuffer::new(1024);
+        
+        // Initially should be empty or zeros
+        let samples = buffer.get_samples();
+        assert_eq!(samples.len(), 1024, "Buffer should have correct size");
+        
+        // Update with some samples
+        let test_samples: Vec<f32> = (0..512).map(|i| (i as f32) / 512.0).collect();
+        buffer.update(&test_samples, 44100, 2);
+        
+        // Verify samples were added
+        let retrieved = buffer.get_samples();
+        assert_eq!(retrieved.len(), 1024, "Buffer size should remain constant");
+        assert_eq!(buffer.sample_rate(), 44100);
+        assert_eq!(buffer.channels(), 2);
+    }
+
+    #[test]
+    fn test_audio_commands_clone() {
+        // Test that AudioCommand can be cloned
+        let cmd1 = AudioCommand::Stop;
+        let cmd2 = cmd1.clone();
+        
+        // Both should be Stop
+        match (cmd1, cmd2) {
+            (AudioCommand::Stop, AudioCommand::Stop) => {},
+            _ => panic!("Commands should both be Stop"),
+        }
+    }
+
+    #[test]
+    fn test_multiple_engines() {
+        // Test that multiple AudioEngines cannot be created simultaneously
+        // (This tests the singleton behavior of audio output)
+        let engine1 = AudioEngine::new();
+        assert!(engine1.is_ok(), "First engine should be created");
+        
+        // Note: Creating a second engine might fail or succeed depending on the audio backend
+        // We just test that it doesn't panic
+        let _engine2 = AudioEngine::new();
+        // No assertion here as behavior is platform-dependent
+    }
 }

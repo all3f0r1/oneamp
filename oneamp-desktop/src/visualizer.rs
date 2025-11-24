@@ -1,5 +1,5 @@
 use egui::{Color32, Painter, Pos2, Rect, Stroke, Vec2};
-use std::f32::consts::PI;
+use rustfft::{FftPlanner, num_complex::Complex};
 
 /// Type of visualization
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -29,6 +29,8 @@ pub struct Visualizer {
     viz_type: VisualizationType,
     samples: Vec<f32>,
     spectrum: Vec<f32>,
+    fft_buffer: Vec<Complex<f32>>,
+    fft_planner: FftPlanner<f32>,
 }
 
 impl Visualizer {
@@ -37,6 +39,8 @@ impl Visualizer {
             viz_type: VisualizationType::Oscilloscope,
             samples: vec![0.0; 256],
             spectrum: vec![0.0; 64],
+            fft_buffer: vec![Complex::new(0.0, 0.0); 512],
+            fft_planner: FftPlanner::new(),
         }
     }
     
@@ -69,34 +73,46 @@ impl Visualizer {
         self.compute_spectrum(audio_samples);
     }
     
-    /// Compute spectrum from audio samples (simplified FFT)
+    /// Compute spectrum from audio samples using FFT
     fn compute_spectrum(&mut self, samples: &[f32]) {
-        // Simple energy-based spectrum analyzer
-        // Divide audio into frequency bands
-        let samples_per_band = samples.len() / self.spectrum.len();
+        if samples.is_empty() {
+            return;
+        }
+        
+        // Prepare FFT buffer
+        let fft_size = self.fft_buffer.len();
+        for (i, buf) in self.fft_buffer.iter_mut().enumerate() {
+            if i < samples.len() {
+                buf.re = samples[i];
+                buf.im = 0.0;
+            } else {
+                buf.re = 0.0;
+                buf.im = 0.0;
+            }
+        }
+        
+        // Perform FFT
+        let fft = self.fft_planner.plan_fft_forward(fft_size);
+        fft.process(&mut self.fft_buffer);
+        
+        // Convert FFT output to spectrum bands
+        let bins_per_band = (fft_size / 2) / self.spectrum.len();
         
         for (i, band) in self.spectrum.iter_mut().enumerate() {
-            let start = i * samples_per_band;
-            let end = ((i + 1) * samples_per_band).min(samples.len());
+            let start = i * bins_per_band;
+            let end = ((i + 1) * bins_per_band).min(fft_size / 2);
             
-            if start >= samples.len() {
-                *band = 0.0;
-                continue;
+            // Calculate magnitude for this band
+            let mut magnitude = 0.0;
+            for bin in start..end {
+                let complex = self.fft_buffer[bin];
+                magnitude += (complex.re * complex.re + complex.im * complex.im).sqrt();
             }
+            magnitude /= (end - start) as f32;
             
-            // Calculate RMS energy for this band
-            let mut energy = 0.0;
-            let mut count = 0;
-            for &sample in &samples[start..end] {
-                energy += sample * sample;
-                count += 1;
-            }
-            
-            if count > 0 {
-                energy = (energy / count as f32).sqrt();
-                // Apply some smoothing
-                *band = *band * 0.7 + energy * 0.3;
-            }
+            // Normalize and apply smoothing
+            magnitude = (magnitude / 100.0).min(1.0); // Normalize
+            *band = *band * 0.7 + magnitude * 0.3; // Smooth
         }
     }
     
@@ -182,5 +198,140 @@ impl Visualizer {
 impl Default for Visualizer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_visualization_type_toggle() {
+        let mut viz_type = VisualizationType::Oscilloscope;
+        viz_type.toggle();
+        assert_eq!(viz_type, VisualizationType::Spectrum);
+        
+        viz_type.toggle();
+        assert_eq!(viz_type, VisualizationType::Oscilloscope);
+    }
+
+    #[test]
+    fn test_visualization_type_name() {
+        assert_eq!(VisualizationType::Oscilloscope.name(), "Oscilloscope");
+        assert_eq!(VisualizationType::Spectrum.name(), "Spectrum");
+    }
+
+    #[test]
+    fn test_visualizer_creation() {
+        let visualizer = Visualizer::new();
+        assert_eq!(visualizer.viz_type(), VisualizationType::Oscilloscope);
+        assert_eq!(visualizer.samples.len(), 256);
+        assert_eq!(visualizer.spectrum.len(), 64);
+    }
+
+    #[test]
+    fn test_visualizer_default() {
+        let visualizer = Visualizer::default();
+        assert_eq!(visualizer.viz_type(), VisualizationType::Oscilloscope);
+    }
+
+    #[test]
+    fn test_visualizer_toggle() {
+        let mut visualizer = Visualizer::new();
+        assert_eq!(visualizer.viz_type(), VisualizationType::Oscilloscope);
+        
+        visualizer.toggle_type();
+        assert_eq!(visualizer.viz_type(), VisualizationType::Spectrum);
+        
+        visualizer.toggle_type();
+        assert_eq!(visualizer.viz_type(), VisualizationType::Oscilloscope);
+    }
+
+    #[test]
+    fn test_visualizer_update_empty() {
+        let mut visualizer = Visualizer::new();
+        
+        // Update with empty samples (should not panic)
+        visualizer.update(&[]);
+        
+        // Samples should still be initialized
+        assert_eq!(visualizer.samples.len(), 256);
+        assert_eq!(visualizer.spectrum.len(), 64);
+    }
+
+    #[test]
+    fn test_visualizer_update_with_data() {
+        let mut visualizer = Visualizer::new();
+        
+        // Create test audio samples (sine wave)
+        let samples: Vec<f32> = (0..1024)
+            .map(|i| (i as f32 * 0.1).sin() * 0.5)
+            .collect();
+        
+        visualizer.update(&samples);
+        
+        // Verify that samples were updated
+        assert_eq!(visualizer.samples.len(), 256);
+        
+        // At least some samples should be non-zero
+        let non_zero_count = visualizer.samples.iter().filter(|&&s| s != 0.0).count();
+        assert!(non_zero_count > 0, "Should have some non-zero samples");
+    }
+
+    #[test]
+    fn test_spectrum_computation() {
+        let mut visualizer = Visualizer::new();
+        
+        // Create test audio samples with known frequency content
+        let samples: Vec<f32> = (0..512)
+            .map(|i| (i as f32 * 0.05).sin())
+            .collect();
+        
+        visualizer.update(&samples);
+        
+        // Spectrum should be updated
+        assert_eq!(visualizer.spectrum.len(), 64);
+        
+        // At least some spectrum bands should have energy
+        let non_zero_bands = visualizer.spectrum.iter().filter(|&&s| s > 0.0).count();
+        assert!(non_zero_bands > 0, "Should have some non-zero spectrum bands");
+    }
+
+    #[test]
+    fn test_spectrum_normalization() {
+        let mut visualizer = Visualizer::new();
+        
+        // Create very loud samples
+        let samples: Vec<f32> = vec![1.0; 512];
+        
+        visualizer.update(&samples);
+        
+        // All spectrum values should be normalized (between 0 and 1)
+        for &magnitude in &visualizer.spectrum {
+            assert!(magnitude >= 0.0 && magnitude <= 1.0, 
+                    "Spectrum magnitude should be normalized: {}", magnitude);
+        }
+    }
+
+    #[test]
+    fn test_fft_buffer_size() {
+        let visualizer = Visualizer::new();
+        assert_eq!(visualizer.fft_buffer.len(), 512, "FFT buffer should be 512 samples");
+    }
+
+    #[test]
+    fn test_multiple_updates() {
+        let mut visualizer = Visualizer::new();
+        
+        // Update multiple times
+        for _ in 0..10 {
+            let samples: Vec<f32> = (0..256).map(|i| (i as f32 * 0.1).sin()).collect();
+            visualizer.update(&samples);
+        }
+        
+        // Should still be valid
+        assert_eq!(visualizer.samples.len(), 256);
+        assert_eq!(visualizer.spectrum.len(), 64);
     }
 }

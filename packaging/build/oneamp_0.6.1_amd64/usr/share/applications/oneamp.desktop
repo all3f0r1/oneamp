@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=OneAmp
+GenericName=Audio Player
+Comment=Modern audio player inspired by Winamp
+Exec=oneamp
+Icon=oneamp
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+MimeType=audio/mpeg;audio/mp3;audio/flac;audio/x-flac;audio/ogg;audio/x-vorbis+ogg;audio/wav;audio/x-wav;
+Keywords=music;audio;player;mp3;flac;
+StartupNotify=true

@@ -6,7 +6,7 @@ mod config;
 use config::AppConfig;
 
 mod visualizer;
-use visualizer::{Visualizer, VisualizationType};
+use visualizer::Visualizer;
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
@@ -87,24 +87,21 @@ impl Default for OneAmpApp {
 
 impl OneAmpApp {
     /// Play the welcome jingle (first run only)
-    fn play_jingle() {
-        // Jingle is embedded in the binary
+    fn play_jingle(&mut self) {
+        // Save jingle to temp file and play it
         const JINGLE_DATA: &[u8] = include_bytes!("../../packaging/jingle.wav");
         
-        // Play in a separate thread to not block startup
-        std::thread::spawn(move || {
-            use rodio::{Decoder, OutputStream};
-            use std::io::Cursor;
+        if let Ok(temp_dir) = std::env::temp_dir().canonicalize() {
+            let jingle_path = temp_dir.join("oneamp_jingle.wav");
             
-            if let Ok((_stream, handle)) = OutputStream::try_default() {
-                if let Ok(source) = Decoder::new(Cursor::new(JINGLE_DATA)) {
-                    if let Ok(sink) = rodio::Sink::try_new(&handle) {
-                        sink.append(source);
-                        sink.sleep_until_end();
-                    }
+            // Write jingle to temp file
+            if std::fs::write(&jingle_path, JINGLE_DATA).is_ok() {
+                // Play using the audio engine
+                if let Some(engine) = &mut self.audio_engine {
+                    let _ = engine.send_command(AudioCommand::Play(jingle_path));
                 }
             }
-        });
+        }
     }
     
     fn new() -> Self {
@@ -119,12 +116,7 @@ impl OneAmpApp {
         // Load configuration
         let (config, is_first_run) = AppConfig::load();
         
-        // Play jingle on first run
-        if is_first_run {
-            Self::play_jingle();
-        }
-        
-        let app = Self {
+        let mut app = Self {
             audio_engine,
             current_track: None,
             playback_state: PlaybackState::Stopped,
@@ -145,6 +137,11 @@ impl OneAmpApp {
         if let Some(ref engine) = app.audio_engine {
             let _ = engine.send_command(AudioCommand::SetEqualizerEnabled(config.equalizer.enabled));
             let _ = engine.send_command(AudioCommand::SetEqualizerBands(config.equalizer.gains));
+        }
+        
+        // Play jingle on first run
+        if is_first_run {
+            app.play_jingle();
         }
         
         app
@@ -179,10 +176,9 @@ impl OneAmpApp {
                     let path = entry.path();
                     if path.is_file() {
                         if let Some(ext) = path.extension() {
-                            if ["mp3", "flac", "ogg", "wav"].contains(&ext.to_str().unwrap_or("")) {
-                                if !self.playlist.contains(&path) {
-                                    self.playlist.push(path);
-                                }
+                            if ["mp3", "flac", "ogg", "wav"].contains(&ext.to_str().unwrap_or(""))
+                                && !self.playlist.contains(&path) {
+                                self.playlist.push(path);
                             }
                         }
                     }

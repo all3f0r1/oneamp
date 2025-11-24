@@ -14,9 +14,6 @@ path = "src/main.rs"
 # Core audio engine
 oneamp-core = { path = "../oneamp-core" }
 
-# Audio playback for jingle
-rodio.workspace = true
-
 # GUI framework
 eframe = "0.30"
 egui = "0.30"
@@ -34,3 +31,6 @@ dirs = "5.0"
 
 # Random for shuffle
 rand = "0.8"
+
+# FFT for spectrum analyzer
+rustfft = "6.2"
