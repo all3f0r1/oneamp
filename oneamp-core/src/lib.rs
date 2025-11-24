@@ -24,6 +24,10 @@ pub enum AudioCommand {
     Stop,
     /// Seek to a position (in seconds)
     Seek(f32),
+    /// Play next track in playlist
+    Next,
+    /// Play previous track in playlist
+    Previous,
     /// Shutdown the audio thread
     Shutdown,
 }
@@ -43,6 +47,10 @@ pub enum AudioEvent {
     Position(f32, f32),
     /// Playback finished (track ended)
     Finished,
+    /// Request next track from playlist
+    RequestNext,
+    /// Request previous track from playlist
+    RequestPrevious,
     /// Error occurred
     Error(String),
 }
@@ -255,6 +263,20 @@ fn audio_thread_main(
                 }
                 AudioCommand::Seek(_pos) => {
                     // TODO: Implement seeking (requires more complex handling)
+                }
+                AudioCommand::Next => {
+                    // Stop current playback and request next track from GUI
+                    sink = None;
+                    current_track = None;
+                    is_paused = false;
+                    let _ = event_tx.send(AudioEvent::RequestNext);
+                }
+                AudioCommand::Previous => {
+                    // Stop current playback and request previous track from GUI
+                    sink = None;
+                    current_track = None;
+                    is_paused = false;
+                    let _ = event_tx.send(AudioEvent::RequestPrevious);
                 }
                 AudioCommand::Shutdown => {
                     break;

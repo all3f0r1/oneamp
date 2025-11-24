@@ -53,6 +53,10 @@ struct OneAmpApp {
     current_position: f32,
     total_duration: f32,
     error_message: Option<String>,
+    // Playlist management
+    playlist: Vec<PathBuf>,
+    current_track_index: Option<usize>,
+    selected_track_index: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,6 +89,9 @@ impl OneAmpApp {
             current_position: 0.0,
             total_duration: 0.0,
             error_message: None,
+            playlist: Vec::new(),
+            current_track_index: None,
+            selected_track_index: None,
         }
     }
     
@@ -94,6 +101,96 @@ impl OneAmpApp {
             .pick_file()
         {
             self.play_file(path);
+        }
+    }
+    
+    fn add_files_to_playlist(&mut self) {
+        if let Some(paths) = rfd::FileDialog::new()
+            .add_filter("Audio Files", &["mp3", "flac"])
+            .pick_files()
+        {
+            for path in paths {
+                if !self.playlist.contains(&path) {
+                    self.playlist.push(path);
+                }
+            }
+        }
+    }
+    
+    fn add_folder_to_playlist(&mut self) {
+        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+            if let Ok(entries) = std::fs::read_dir(folder) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        if let Some(ext) = path.extension() {
+                            if ["mp3", "flac"].contains(&ext.to_str().unwrap_or("")) {
+                                if !self.playlist.contains(&path) {
+                                    self.playlist.push(path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    fn remove_selected_track(&mut self) {
+        if let Some(index) = self.selected_track_index {
+            if index < self.playlist.len() {
+                self.playlist.remove(index);
+                // Adjust current track index if needed
+                if let Some(current_idx) = self.current_track_index {
+                    if current_idx == index {
+                        self.current_track_index = None;
+                    } else if current_idx > index {
+                        self.current_track_index = Some(current_idx - 1);
+                    }
+                }
+                // Adjust selected index
+                if index >= self.playlist.len() && !self.playlist.is_empty() {
+                    self.selected_track_index = Some(self.playlist.len() - 1);
+                } else if self.playlist.is_empty() {
+                    self.selected_track_index = None;
+                }
+            }
+        }
+    }
+    
+    fn clear_playlist(&mut self) {
+        self.playlist.clear();
+        self.current_track_index = None;
+        self.selected_track_index = None;
+    }
+    
+    fn play_track_at_index(&mut self, index: usize) {
+        if index < self.playlist.len() {
+            self.current_track_index = Some(index);
+            let path = self.playlist[index].clone();
+            self.play_file(path);
+        }
+    }
+    
+    fn play_next(&mut self) {
+        if let Some(current_idx) = self.current_track_index {
+            let next_idx = (current_idx + 1) % self.playlist.len();
+            self.play_track_at_index(next_idx);
+        } else if !self.playlist.is_empty() {
+            self.play_track_at_index(0);
+        }
+    }
+    
+    fn play_previous(&mut self) {
+        if let Some(current_idx) = self.current_track_index {
+            let prev_idx = if current_idx == 0 {
+                self.playlist.len() - 1
+            } else {
+                current_idx - 1
+            };
+            self.play_track_at_index(prev_idx);
+        } else if !self.playlist.is_empty() {
+            self.play_track_at_index(self.playlist.len() - 1);
         }
     }
     
@@ -128,37 +225,54 @@ impl OneAmpApp {
     }
     
     fn process_audio_events(&mut self) {
+        // Collect all events first to avoid borrow checker issues
+        let mut events = Vec::new();
         if let Some(ref engine) = self.audio_engine {
             while let Some(event) = engine.try_recv_event() {
-                match event {
-                    AudioEvent::TrackLoaded(track_info) => {
-                        self.current_track = Some(track_info.clone());
-                        self.total_duration = track_info.duration_secs.unwrap_or(0.0);
-                        self.current_position = 0.0;
-                        self.error_message = None;
+                events.push(event);
+            }
+        }
+        
+        // Process events
+        for event in events {
+            match event {
+                AudioEvent::TrackLoaded(track_info) => {
+                    self.current_track = Some(track_info.clone());
+                    self.total_duration = track_info.duration_secs.unwrap_or(0.0);
+                    self.current_position = 0.0;
+                    self.error_message = None;
+                }
+                AudioEvent::Playing => {
+                    self.playback_state = PlaybackState::Playing;
+                }
+                AudioEvent::Paused => {
+                    self.playback_state = PlaybackState::Paused;
+                }
+                AudioEvent::Stopped => {
+                    self.playback_state = PlaybackState::Stopped;
+                    self.current_position = 0.0;
+                }
+                AudioEvent::Position(current, total) => {
+                    self.current_position = current;
+                    self.total_duration = total;
+                }
+                AudioEvent::Finished => {
+                    self.playback_state = PlaybackState::Stopped;
+                    self.current_position = 0.0;
+                    // Auto-play next track if in playlist
+                    if !self.playlist.is_empty() {
+                        self.play_next();
                     }
-                    AudioEvent::Playing => {
-                        self.playback_state = PlaybackState::Playing;
-                    }
-                    AudioEvent::Paused => {
-                        self.playback_state = PlaybackState::Paused;
-                    }
-                    AudioEvent::Stopped => {
-                        self.playback_state = PlaybackState::Stopped;
-                        self.current_position = 0.0;
-                    }
-                    AudioEvent::Position(current, total) => {
-                        self.current_position = current;
-                        self.total_duration = total;
-                    }
-                    AudioEvent::Finished => {
-                        self.playback_state = PlaybackState::Stopped;
-                        self.current_position = 0.0;
-                    }
-                    AudioEvent::Error(msg) => {
-                        self.error_message = Some(msg);
-                        self.playback_state = PlaybackState::Stopped;
-                    }
+                }
+                AudioEvent::RequestNext => {
+                    self.play_next();
+                }
+                AudioEvent::RequestPrevious => {
+                    self.play_previous();
+                }
+                AudioEvent::Error(msg) => {
+                    self.error_message = Some(msg);
+                    self.playback_state = PlaybackState::Stopped;
                 }
             }
         }
@@ -219,6 +333,14 @@ impl eframe::App for OneAmpApp {
                 
                 ui.add_space(16.0);
                 
+                // Previous button
+                let prev_enabled = !self.playlist.is_empty();
+                if ui.add_enabled(prev_enabled, egui::Button::new("⏮ Previous")).clicked() {
+                    self.play_previous();
+                }
+                
+                ui.add_space(8.0);
+                
                 // Play/Pause button
                 let play_pause_text = match self.playback_state {
                     PlaybackState::Playing => "⏸ Pause",
@@ -238,10 +360,96 @@ impl eframe::App for OneAmpApp {
                 if ui.add_enabled(stop_enabled, egui::Button::new("⏹ Stop")).clicked() {
                     self.stop();
                 }
+                
+                ui.add_space(8.0);
+                
+                // Next button
+                let next_enabled = !self.playlist.is_empty();
+                if ui.add_enabled(next_enabled, egui::Button::new("⏭ Next")).clicked() {
+                    self.play_next();
+                }
             });
             
             ui.add_space(8.0);
         });
+        
+        // Left panel with playlist
+        egui::SidePanel::left("playlist_panel")
+            .default_width(250.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                ui.heading("Playlist");
+                ui.separator();
+                
+                // Playlist controls
+                ui.horizontal(|ui| {
+                    if ui.button("➕ Add Files").clicked() {
+                        self.add_files_to_playlist();
+                    }
+                    if ui.button("📁 Add Folder").clicked() {
+                        self.add_folder_to_playlist();
+                    }
+                });
+                
+                ui.horizontal(|ui| {
+                    let remove_enabled = self.selected_track_index.is_some();
+                    if ui.add_enabled(remove_enabled, egui::Button::new("➖ Remove")).clicked() {
+                        self.remove_selected_track();
+                    }
+                    if ui.button("🗑 Clear All").clicked() {
+                        self.clear_playlist();
+                    }
+                });
+                
+                ui.separator();
+                
+                // Playlist items
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        if self.playlist.is_empty() {
+                            ui.add_space(20.0);
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    egui::RichText::new("No tracks in playlist")
+                                        .color(egui::Color32::from_rgb(120, 120, 120))
+                                );
+                            });
+                        } else {
+                            let mut track_to_play = None;
+                            
+                            for (idx, path) in self.playlist.iter().enumerate() {
+                                let file_name = path.file_name()
+                                    .and_then(|n| n.to_str())
+                                    .unwrap_or("Unknown");
+                                
+                                let is_current = self.current_track_index == Some(idx);
+                                let is_selected = self.selected_track_index == Some(idx);
+                                
+                                let mut text = egui::RichText::new(file_name);
+                                
+                                if is_current {
+                                    text = text.color(egui::Color32::from_rgb(0, 200, 255));
+                                }
+                                
+                                let response = ui.selectable_label(is_selected, text);
+                                
+                                if response.clicked() {
+                                    self.selected_track_index = Some(idx);
+                                }
+                                
+                                if response.double_clicked() {
+                                    track_to_play = Some(idx);
+                                }
+                            }
+                            
+                            // Play track after the loop to avoid borrow checker issues
+                            if let Some(idx) = track_to_play {
+                                self.play_track_at_index(idx);
+                            }
+                        }
+                    });
+            });
         
         // Central panel with track info
         egui::CentralPanel::default().show(ctx, |ui| {

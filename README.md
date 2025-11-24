@@ -337,6 +337,18 @@ The GUI application with basic controls has been implemented:
 - Multi-threaded architecture (GUI thread + Audio thread)
 - Event-based communication between threads
 
+**✅ Milestone 3: COMPLETED**
+
+Playlist management has been fully implemented:
+- Resizable playlist panel on the left side
+- Add files and folders to playlist
+- Remove selected tracks or clear entire playlist
+- Track selection with visual feedback (current track highlighted in cyan)
+- Double-click to play a track
+- Previous/Next navigation buttons
+- Automatic playback of next track when current track finishes
+- Playlist state management with proper index tracking
+
 ---
 
 ## References
