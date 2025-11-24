@@ -14,7 +14,7 @@ fn main() -> eframe::Result {
             .with_inner_size([600.0, 400.0])
             .with_min_inner_size([400.0, 300.0])
             .with_icon(
-                eframe::icon_data::from_png_bytes(&include_bytes!("../../../architecture.png")[..])
+                eframe::icon_data::from_png_bytes(&include_bytes!("../../architecture.png")[..])
                     .unwrap_or_default(),
             ),
         ..Default::default()
