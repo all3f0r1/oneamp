@@ -22,6 +22,18 @@ mod custom_widgets;
 mod animations;
 use animations::AnimationTimer;
 
+mod equalizer_display;
+use equalizer_display::EqualizerDisplay;
+
+mod control_buttons;
+use control_buttons::{ControlAction, control_button_row};
+
+mod album_art;
+use album_art::AlbumArtDisplay;
+
+mod window_chrome;
+use window_chrome::{WindowChrome, WindowAction};
+
 fn main() -> eframe::Result {
     let theme = Theme::default();
     
@@ -29,6 +41,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([theme.layout.window_min_width, theme.layout.window_min_height])
             .with_min_inner_size([theme.layout.window_min_width, theme.layout.window_min_height])
+            .with_decorations(false) // Custom window chrome
             .with_icon(
                 eframe::icon_data::from_png_bytes(&include_bytes!("../../icon_256.png")[..])
                     .unwrap_or_default(),
@@ -76,6 +89,11 @@ struct OneAmpApp {
     
     // Animation
     animation_timer: AnimationTimer,
+    
+    // New UI components
+    equalizer_display: EqualizerDisplay,
+    album_art: AlbumArtDisplay,
+    window_chrome: WindowChrome,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,6 +137,9 @@ impl OneAmpApp {
             scroll_offset: 0,
             last_scroll_update: std::time::Instant::now(),
             animation_timer: AnimationTimer::new(),
+            equalizer_display: EqualizerDisplay::new(10),
+            album_art: AlbumArtDisplay::new(),
+            window_chrome: WindowChrome::new(),
         };
         
         if let Some(ref engine) = app.audio_engine {
@@ -361,6 +382,25 @@ impl OneAmpApp {
 impl eframe::App for OneAmpApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.theme.apply_to_egui(ctx);
+        
+        // Custom window chrome
+        let window_action = self.window_chrome.render(ctx, &self.theme, "OneAmp");
+        match window_action {
+            WindowAction::Close => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            WindowAction::Minimize => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
+            WindowAction::ToggleMaximize => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+            }
+            WindowAction::StartDrag => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
+            WindowAction::None => {}
+        }
+        
         self.handle_keyboard_shortcuts(ctx);
         self.handle_dropped_files(ctx);
         self.process_audio_events();
@@ -402,31 +442,46 @@ impl eframe::App for OneAmpApp {
                 
                 ui.add_space(8.0);
                 
-                // CONTROL BUTTONS
-                let controls = ui_components::render_control_buttons(
-                    ui,
-                    self.playback_state == PlaybackState::Playing,
-                    self.playback_state == PlaybackState::Paused,
-                    !self.playlist.is_empty(),
-                );
-                
-                if controls.previous {
-                    self.play_previous();
-                }
-                if controls.play_pause {
-                    self.toggle_play_pause();
-                }
-                if controls.stop {
-                    self.stop();
-                }
-                if controls.next {
-                    self.play_next();
-                }
+                // CONTROL BUTTONS (new 3D buttons)
+                ui.horizontal(|ui| {
+                    ui.add_space(8.0);
+                    
+                    // Album art on the left
+                    if let Some(ref track) = self.current_track {
+                        self.album_art.load_from_track(&track.path, ctx);
+                    }
+                    
+                    if self.album_art.has_art() {
+                        self.album_art.render(ui, &self.theme, 120.0);
+                        ui.add_space(16.0);
+                    }
+                    
+                    // Control buttons
+                    ui.vertical(|ui| {
+                        ui.add_space(20.0);
+                        
+                        let action = control_button_row(
+                            ui,
+                            &self.theme,
+                            self.playback_state == PlaybackState::Playing,
+                            self.playback_state == PlaybackState::Paused,
+                        );
+                        
+                        match action {
+                            ControlAction::Previous => self.play_previous(),
+                            ControlAction::Play => self.toggle_play_pause(),
+                            ControlAction::Pause => self.toggle_play_pause(),
+                            ControlAction::Stop => self.stop(),
+                            ControlAction::Next => self.play_next(),
+                            ControlAction::None => {}
+                        }
+                    });
+                });
                 
                 ui.add_space(8.0);
                 ui.separator();
                 
-                // EQUALIZER SECTION
+                // EQUALIZER SECTION (new advanced display)
                 ui.horizontal(|ui| {
                     ui.heading("🎚 Equalizer");
                     if ui.button(if self.show_equalizer { "▼" } else { "▶" }).clicked() {
@@ -436,7 +491,7 @@ impl eframe::App for OneAmpApp {
                 
                 if self.show_equalizer {
                     ui.add_space(8.0);
-                    if ui_components::render_equalizer(
+                    if self.equalizer_display.render(
                         ui,
                         &self.theme,
                         &mut self.eq_enabled,

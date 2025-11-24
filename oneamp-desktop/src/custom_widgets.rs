@@ -10,7 +10,7 @@ pub fn button_3d(
     icon: Option<&str>,
 ) -> Response {
     let desired_size = Vec2::new(80.0, 32.0);
-    let (rect, mut response) = ui.allocate_exact_size(desired_size, Sense::click());
+    let (rect, response) = ui.allocate_exact_size(desired_size, Sense::click());
     
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();

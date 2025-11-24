@@ -40,3 +40,6 @@ toml = "0.8"
 
 # ID3 tag reading
 lofty = "0.21"
+
+# Image decoding for album art
+image = "0.25"
