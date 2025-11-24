@@ -206,6 +206,135 @@ impl Default for Visualizer {
     }
 }
 
+impl Visualizer {
+    /// Render oscilloscope with fancy effects
+    pub fn render_oscilloscope_fancy(
+        &self,
+        painter: &eframe::egui::Painter,
+        rect: eframe::egui::Rect,
+        _time: f32,
+    ) {
+        use eframe::egui::{Color32, Pos2, Stroke};
+        
+        if self.samples.is_empty() {
+            return;
+        }
+        
+        let width = rect.width();
+        let height = rect.height();
+        let center_y = rect.center().y;
+        
+        // Build waveform points
+        let mut points = Vec::new();
+        for (i, &sample) in self.samples.iter().enumerate() {
+            let x = rect.left() + (i as f32 / self.samples.len() as f32) * width;
+            let y = center_y + sample * height * 0.4;
+            points.push(Pos2::new(x, y));
+        }
+        
+        // Glow layers (3 layers for depth)
+        for layer in 0..3 {
+            let alpha = (80 - layer * 25).max(10) as u8;
+            let thickness = 2.0 + layer as f32 * 1.5;
+            painter.add(eframe::egui::Shape::line(
+                points.clone(),
+                Stroke::new(thickness, Color32::from_rgba_premultiplied(100, 180, 255, alpha)),
+            ));
+        }
+        
+        // Main waveform
+        painter.add(eframe::egui::Shape::line(
+            points,
+            Stroke::new(2.0, Color32::from_rgb(100, 180, 255)),
+        ));
+        
+        // Center line
+        painter.line_segment(
+            [
+                Pos2::new(rect.left(), center_y),
+                Pos2::new(rect.right(), center_y),
+            ],
+            Stroke::new(1.0, Color32::from_white_alpha(30)),
+        );
+    }
+    
+    /// Render spectrum analyzer with fancy effects
+    pub fn render_spectrum_fancy(
+        &self,
+        painter: &eframe::egui::Painter,
+        rect: eframe::egui::Rect,
+        _time: f32,
+    ) {
+        use eframe::egui::{Color32, Pos2, Rect as EguiRect, Vec2};
+        use crate::visual_effects::VisualEffects;
+        
+        if self.spectrum.is_empty() {
+            return;
+        }
+        
+        let bar_count = self.spectrum.len();
+        let bar_width = (rect.width() / bar_count as f32) * 0.8;
+        let spacing = (rect.width() / bar_count as f32) * 0.2;
+        
+        for (i, &magnitude) in self.spectrum.iter().enumerate() {
+            let x = rect.left() + i as f32 * (bar_width + spacing);
+            let bar_height = magnitude * rect.height();
+            
+            if bar_height < 1.0 {
+                continue;
+            }
+            
+            let bar_rect = EguiRect::from_min_size(
+                Pos2::new(x, rect.bottom() - bar_height),
+                Vec2::new(bar_width, bar_height),
+            );
+            
+            // Gradient color based on height (green -> yellow -> red)
+            let color = if magnitude > 0.8 {
+                Color32::from_rgb(255, 50, 50) // Red
+            } else if magnitude > 0.5 {
+                Color32::from_rgb(255, 200, 50) // Yellow
+            } else {
+                Color32::from_rgb(50, 255, 100) // Green
+            };
+            
+            // Glow effect for high bars
+            if magnitude > 0.6 {
+                VisualEffects::glow(
+                    painter,
+                    bar_rect,
+                    2.0,
+                    4.0,
+                    color.linear_multiply(0.5),
+                );
+            }
+            
+            // Bar with gradient
+            VisualEffects::gradient_rect_vertical(
+                painter,
+                bar_rect,
+                color.linear_multiply(1.2),
+                color.linear_multiply(0.7),
+                2.0,
+            );
+            
+            // Reflection at bottom (subtle)
+            let reflection_height = (bar_height * 0.3).min(20.0);
+            let reflection_rect = EguiRect::from_min_size(
+                Pos2::new(x, rect.bottom()),
+                Vec2::new(bar_width, reflection_height),
+            );
+            
+            VisualEffects::gradient_rect_vertical(
+                painter,
+                reflection_rect,
+                color.linear_multiply(0.3),
+                Color32::from_black_alpha(0),
+                2.0,
+            );
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

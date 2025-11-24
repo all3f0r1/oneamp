@@ -15,6 +15,13 @@ mod track_display;
 
 mod ui_components;
 
+mod visual_effects;
+
+mod custom_widgets;
+
+mod animations;
+use animations::AnimationTimer;
+
 fn main() -> eframe::Result {
     let theme = Theme::default();
     
@@ -66,6 +73,9 @@ struct OneAmpApp {
     // UI state
     scroll_offset: usize,
     last_scroll_update: std::time::Instant,
+    
+    // Animation
+    animation_timer: AnimationTimer,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,6 +118,7 @@ impl OneAmpApp {
             theme,
             scroll_offset: 0,
             last_scroll_update: std::time::Instant::now(),
+            animation_timer: AnimationTimer::new(),
         };
         
         if let Some(ref engine) = app.audio_engine {

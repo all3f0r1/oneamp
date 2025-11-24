@@ -73,10 +73,12 @@ pub fn render_player_section(
     );
 }
 
-/// Render a simple spectrum visualizer
+/// Render a fancy spectrum visualizer with effects
 fn render_visualizer(ui: &mut egui::Ui, theme: &Theme, data: &[f32]) {
-    let height = 40.0;
-    let width = ui.available_width().min(300.0);
+    use crate::visual_effects::VisualEffects;
+    
+    let height = 60.0;
+    let width = ui.available_width().min(400.0);
     
     let (response, painter) = ui.allocate_painter(
         egui::vec2(width, height),
@@ -85,7 +87,8 @@ fn render_visualizer(ui: &mut egui::Ui, theme: &Theme, data: &[f32]) {
     
     let rect = response.rect;
     let bar_count = 32.min(data.len());
-    let bar_width = rect.width() / bar_count as f32;
+    let bar_width = (rect.width() / bar_count as f32) * 0.8;
+    let spacing = (rect.width() / bar_count as f32) * 0.2;
     
     for i in 0..bar_count {
         let value = if i < data.len() {
@@ -95,18 +98,59 @@ fn render_visualizer(ui: &mut egui::Ui, theme: &Theme, data: &[f32]) {
         };
         
         let bar_height = value * rect.height();
-        let x = rect.left() + i as f32 * bar_width;
-        let y = rect.bottom() - bar_height;
         
+        if bar_height < 1.0 {
+            continue;
+        }
+        
+        let x = rect.left() + i as f32 * (bar_width + spacing);
         let bar_rect = egui::Rect::from_min_size(
-            egui::pos2(x, y),
-            egui::vec2(bar_width * 0.8, bar_height),
+            egui::pos2(x, rect.bottom() - bar_height),
+            egui::vec2(bar_width, bar_height),
         );
         
-        painter.rect_filled(
+        // Gradient color based on height
+        let color = if value > 0.8 {
+            egui::Color32::from_rgb(255, 50, 50) // Red
+        } else if value > 0.5 {
+            egui::Color32::from_rgb(255, 200, 50) // Yellow
+        } else {
+            Theme::color32(&theme.colors.display_accent) // Blue/Green
+        };
+        
+        // Glow for high bars
+        if value > 0.6 {
+            VisualEffects::glow(
+                &painter,
+                bar_rect,
+                2.0,
+                3.0,
+                color.linear_multiply(0.5),
+            );
+        }
+        
+        // Bar with gradient
+        VisualEffects::gradient_rect_vertical(
+            &painter,
             bar_rect,
+            color.linear_multiply(1.2),
+            color.linear_multiply(0.7),
             2.0,
-            Theme::color32(&theme.colors.display_accent),
+        );
+        
+        // Subtle reflection
+        let reflection_height = (bar_height * 0.2).min(10.0);
+        let reflection_rect = egui::Rect::from_min_size(
+            egui::pos2(x, rect.bottom()),
+            egui::vec2(bar_width, reflection_height),
+        );
+        
+        VisualEffects::gradient_rect_vertical(
+            &painter,
+            reflection_rect,
+            color.linear_multiply(0.3),
+            egui::Color32::from_black_alpha(0),
+            2.0,
         );
     }
 }
