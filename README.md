@@ -362,6 +362,29 @@ Graphic equalizer with real-time DSP processing:
 - Proper i16 to f32 conversion for DSP processing
 - Stereo processing with independent left/right channel state
 
+**⏸️ Milestone 5: DEFERRED**
+
+Milkdrop visualizations have been deferred to a future release (v0.6.0+) due to:
+- Complex FFI integration with libprojectM (C++ dependency)
+- OpenGL context management complexity
+- Build system complications (CMake, cross-platform)
+- Priority on delivering a stable, functional audio player first
+
+**✅ Milestone 6: COMPLETED** (v0.5.0 - Stable Release)
+
+Modern theme and packaging:
+- Enhanced visual theme with modern dark colors and rounded corners
+- Improved spacing and button padding for better UX
+- Brighter cyan accent color (RGB: 0, 180, 220)
+- Application icon designed and generated (512x512 with multiple sizes)
+- Desktop integration (.desktop file for Linux)
+- Debian package (.deb) with proper dependencies
+- Build script for automated packaging
+- Comprehensive user guide (USER_GUIDE.md)
+- Updated documentation and README
+
+**🎉 Version 0.5.0 is now stable and ready for production use!**
+
 ---
 
 ## References

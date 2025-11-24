@@ -306,8 +306,64 @@ impl OneAmpApp {
     }
 }
 
+impl OneAmpApp {
+    /// Apply custom modern theme
+    fn apply_custom_theme(ctx: &egui::Context) {
+        use egui::{Color32, Rounding, Stroke, Vec2};
+        
+        let mut style = (*ctx.style()).clone();
+        
+        // Modern dark theme colors
+        let bg_color = Color32::from_rgb(25, 25, 30);           // Darker background
+        let panel_bg = Color32::from_rgb(30, 30, 35);           // Panel background
+        let widget_bg = Color32::from_rgb(40, 40, 45);          // Widget background
+        let accent_color = Color32::from_rgb(0, 180, 220);      // Brighter cyan accent
+        let text_color = Color32::from_rgb(220, 220, 225);      // Slightly brighter text
+        
+        // Background colors
+        style.visuals.window_fill = bg_color;
+        style.visuals.panel_fill = panel_bg;
+        style.visuals.extreme_bg_color = widget_bg;
+        
+        // Widget colors
+        style.visuals.widgets.noninteractive.bg_fill = widget_bg;
+        style.visuals.widgets.inactive.bg_fill = widget_bg;
+        style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(50, 50, 55);
+        style.visuals.widgets.active.bg_fill = Color32::from_rgb(60, 60, 65);
+        
+        // Text colors
+        style.visuals.override_text_color = Some(text_color);
+        style.visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, text_color);
+        style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, text_color);
+        style.visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, accent_color);
+        style.visuals.widgets.active.fg_stroke = Stroke::new(1.0, accent_color);
+        
+        // Accent colors
+        style.visuals.selection.bg_fill = accent_color.linear_multiply(0.3);
+        style.visuals.selection.stroke = Stroke::new(1.0, accent_color);
+        style.visuals.hyperlink_color = accent_color;
+        
+        // Rounded corners
+        style.visuals.widgets.noninteractive.rounding = Rounding::same(6.0);
+        style.visuals.widgets.inactive.rounding = Rounding::same(6.0);
+        style.visuals.widgets.hovered.rounding = Rounding::same(6.0);
+        style.visuals.widgets.active.rounding = Rounding::same(6.0);
+        style.visuals.window_rounding = Rounding::same(8.0);
+        
+        // Spacing
+        style.spacing.item_spacing = Vec2::new(8.0, 6.0);
+        style.spacing.button_padding = Vec2::new(12.0, 6.0);
+        style.spacing.window_margin = egui::Margin::same(10.0);
+        
+        ctx.set_style(style);
+    }
+}
+
 impl eframe::App for OneAmpApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Apply custom theme
+        Self::apply_custom_theme(ctx);
+        
         // Process audio events
         self.process_audio_events();
         

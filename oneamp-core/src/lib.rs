@@ -13,8 +13,11 @@ use symphonia::core::probe::Hint;
 
 pub mod equalizer;
 pub mod eq_source;
+pub mod audio_capture;
+
 pub use equalizer::Equalizer;
 pub use eq_source::EqualizerSource;
+pub use audio_capture::{AudioCaptureBuffer, AudioCaptureSource};
 
 /// Commands that can be sent to the audio thread
 #[derive(Debug, Clone)]
