@@ -1,0 +1,24 @@
+[package]
+name = "oneamp-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "OneAmp core audio engine library"
+
+[lib]
+name = "oneamp_core"
+path = "src/lib.rs"
+
+[dependencies]
+# Audio decoding
+symphonia.workspace = true
+
+# Audio playback
+rodio.workspace = true
+
+# Error handling
+anyhow.workspace = true
+
+# Channels for thread communication
+crossbeam-channel.workspace = true

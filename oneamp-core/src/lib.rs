@@ -1,0 +1,302 @@
+use anyhow::{Context, Result};
+use crossbeam_channel::{Receiver, Sender};
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
+use std::fs::File;
+use std::io::BufReader;
+use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
+use symphonia::core::formats::FormatOptions;
+use symphonia::core::io::MediaSourceStream;
+use symphonia::core::meta::MetadataOptions;
+use symphonia::core::probe::Hint;
+
+/// Commands that can be sent to the audio thread
+#[derive(Debug, Clone)]
+pub enum AudioCommand {
+    /// Load and play a file
+    Play(PathBuf),
+    /// Pause playback
+    Pause,
+    /// Resume playback
+    Resume,
+    /// Stop playback
+    Stop,
+    /// Seek to a position (in seconds)
+    Seek(f32),
+    /// Shutdown the audio thread
+    Shutdown,
+}
+
+/// Events sent from the audio thread to the GUI
+#[derive(Debug, Clone)]
+pub enum AudioEvent {
+    /// Track loaded successfully with metadata
+    TrackLoaded(TrackInfo),
+    /// Playback started
+    Playing,
+    /// Playback paused
+    Paused,
+    /// Playback stopped
+    Stopped,
+    /// Playback position update (current_secs, total_secs)
+    Position(f32, f32),
+    /// Playback finished (track ended)
+    Finished,
+    /// Error occurred
+    Error(String),
+}
+
+/// Track metadata information
+#[derive(Debug, Clone)]
+pub struct TrackInfo {
+    pub path: PathBuf,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub duration_secs: Option<f32>,
+    pub sample_rate: Option<u32>,
+    pub channels: Option<u8>,
+}
+
+impl TrackInfo {
+    /// Extract metadata from a file
+    pub fn from_file(path: &PathBuf) -> Result<Self> {
+        let file = File::open(path)
+            .context("Failed to open audio file for metadata reading")?;
+        
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        
+        let mut hint = Hint::new();
+        if let Some(ext) = path.extension() {
+            hint.with_extension(ext.to_str().unwrap_or(""));
+        }
+        
+        let format_opts = FormatOptions::default();
+        let metadata_opts = MetadataOptions::default();
+        
+        let probed = symphonia::default::get_probe()
+            .format(&hint, mss, &format_opts, &metadata_opts)
+            .context("Failed to probe audio file")?;
+        
+        let mut format = probed.format;
+        
+        let mut title = None;
+        let mut artist = None;
+        let mut album = None;
+        
+        // Get metadata from the format
+        if let Some(metadata_rev) = format.metadata().current() {
+            for tag in metadata_rev.tags() {
+                match tag.std_key {
+                    Some(symphonia::core::meta::StandardTagKey::TrackTitle) => {
+                        title = Some(tag.value.to_string());
+                    }
+                    Some(symphonia::core::meta::StandardTagKey::Artist) => {
+                        artist = Some(tag.value.to_string());
+                    }
+                    Some(symphonia::core::meta::StandardTagKey::Album) => {
+                        album = Some(tag.value.to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+        
+        let mut sample_rate = None;
+        let mut channels = None;
+        let mut duration_secs = None;
+        
+        // Get track information
+        if let Some(track) = format.default_track() {
+            let codec_params = &track.codec_params;
+            
+            sample_rate = codec_params.sample_rate;
+            channels = codec_params.channels.map(|c| c.count() as u8);
+            
+            if let (Some(n_frames), Some(sr)) = (codec_params.n_frames, codec_params.sample_rate) {
+                duration_secs = Some(n_frames as f32 / sr as f32);
+            }
+        }
+        
+        Ok(TrackInfo {
+            path: path.clone(),
+            title,
+            artist,
+            album,
+            duration_secs,
+            sample_rate,
+            channels,
+        })
+    }
+}
+
+/// Audio engine that runs in a separate thread
+pub struct AudioEngine {
+    command_tx: Sender<AudioCommand>,
+    event_rx: Receiver<AudioEvent>,
+    thread_handle: Option<thread::JoinHandle<()>>,
+}
+
+impl AudioEngine {
+    /// Create a new audio engine
+    pub fn new() -> Result<Self> {
+        let (command_tx, command_rx) = crossbeam_channel::unbounded();
+        let (event_tx, event_rx) = crossbeam_channel::unbounded();
+        
+        let thread_handle = thread::spawn(move || {
+            if let Err(e) = audio_thread_main(command_rx, event_tx) {
+                eprintln!("Audio thread error: {}", e);
+            }
+        });
+        
+        Ok(AudioEngine {
+            command_tx,
+            event_rx,
+            thread_handle: Some(thread_handle),
+        })
+    }
+    
+    /// Send a command to the audio thread
+    pub fn send_command(&self, cmd: AudioCommand) -> Result<()> {
+        self.command_tx.send(cmd).context("Failed to send command to audio thread")
+    }
+    
+    /// Try to receive an event from the audio thread (non-blocking)
+    pub fn try_recv_event(&self) -> Option<AudioEvent> {
+        self.event_rx.try_recv().ok()
+    }
+    
+    /// Shutdown the audio engine
+    pub fn shutdown(mut self) -> Result<()> {
+        self.send_command(AudioCommand::Shutdown)?;
+        if let Some(handle) = self.thread_handle.take() {
+            handle.join().map_err(|_| anyhow::anyhow!("Failed to join audio thread"))?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for AudioEngine {
+    fn drop(&mut self) {
+        let _ = self.command_tx.send(AudioCommand::Shutdown);
+        if let Some(handle) = self.thread_handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Main audio thread function
+fn audio_thread_main(
+    command_rx: Receiver<AudioCommand>,
+    event_tx: Sender<AudioEvent>,
+) -> Result<()> {
+    let (_stream, stream_handle) = OutputStream::try_default()
+        .context("Failed to get default audio output device")?;
+    
+    let mut sink: Option<Sink> = None;
+    let mut current_track: Option<TrackInfo> = None;
+    let mut is_paused = false;
+    
+    loop {
+        // Check for commands
+        if let Ok(cmd) = command_rx.try_recv() {
+            match cmd {
+                AudioCommand::Play(path) => {
+                    // Stop current playback
+                    sink = None;
+                    
+                    // Load track metadata
+                    match TrackInfo::from_file(&path) {
+                        Ok(track_info) => {
+                            current_track = Some(track_info.clone());
+                            let _ = event_tx.send(AudioEvent::TrackLoaded(track_info));
+                            
+                            // Load and play the file
+                            match load_and_play(&path, &stream_handle) {
+                                Ok(new_sink) => {
+                                    sink = Some(new_sink);
+                                    is_paused = false;
+                                    let _ = event_tx.send(AudioEvent::Playing);
+                                }
+                                Err(e) => {
+                                    let _ = event_tx.send(AudioEvent::Error(format!("Failed to play: {}", e)));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let _ = event_tx.send(AudioEvent::Error(format!("Failed to load track: {}", e)));
+                        }
+                    }
+                }
+                AudioCommand::Pause => {
+                    if let Some(ref s) = sink {
+                        if !is_paused {
+                            s.pause();
+                            is_paused = true;
+                            let _ = event_tx.send(AudioEvent::Paused);
+                        }
+                    }
+                }
+                AudioCommand::Resume => {
+                    if let Some(ref s) = sink {
+                        if is_paused {
+                            s.play();
+                            is_paused = false;
+                            let _ = event_tx.send(AudioEvent::Playing);
+                        }
+                    }
+                }
+                AudioCommand::Stop => {
+                    sink = None;
+                    current_track = None;
+                    is_paused = false;
+                    let _ = event_tx.send(AudioEvent::Stopped);
+                }
+                AudioCommand::Seek(_pos) => {
+                    // TODO: Implement seeking (requires more complex handling)
+                }
+                AudioCommand::Shutdown => {
+                    break;
+                }
+            }
+        }
+        
+        // Update playback position
+        if let Some(ref s) = sink {
+            if s.empty() {
+                // Track finished
+                sink = None;
+                current_track = None;
+                is_paused = false;
+                let _ = event_tx.send(AudioEvent::Finished);
+            } else if !is_paused {
+                // Send position update
+                if let Some(ref track) = current_track {
+                    let current_pos = s.get_pos().as_secs_f32();
+                    let total_duration = track.duration_secs.unwrap_or(0.0);
+                    let _ = event_tx.send(AudioEvent::Position(current_pos, total_duration));
+                }
+            }
+        }
+        
+        // Sleep to avoid busy-waiting
+        thread::sleep(Duration::from_millis(50));
+    }
+    
+    Ok(())
+}
+
+/// Load and play an audio file
+fn load_and_play(path: &PathBuf, stream_handle: &OutputStreamHandle) -> Result<Sink> {
+    let file = BufReader::new(
+        File::open(path).context("Failed to open audio file for playback")?
+    );
+    
+    let source = Decoder::new(file).context("Failed to decode audio file")?;
+    
+    let sink = Sink::try_new(stream_handle).context("Failed to create audio sink")?;
+    sink.append(source);
+    
+    Ok(sink)
+}

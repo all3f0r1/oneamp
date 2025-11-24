@@ -1,0 +1,27 @@
+[package]
+name = "oneamp-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "OneAmp - A Winamp-like audio player for Linux written in Rust - CLI version"
+
+[[bin]]
+name = "oneamp-cli"
+path = "src/main.rs"
+
+[dependencies]
+# Audio decoding
+symphonia.workspace = true
+
+# Audio playback
+rodio.workspace = true
+
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive"] }
+
+# Error handling
+anyhow.workspace = true
+
+# Progress display
+indicatif = "0.17"

@@ -14,8 +14,8 @@ use symphonia::core::probe::Hint;
 
 /// A simple CLI audio player for MP3 and FLAC files
 #[derive(Parser, Debug)]
-#[command(name = "rusty-player-cli")]
-#[command(about = "A Winamp-like audio player CLI for Linux", long_about = None)]
+#[command(name = "oneamp-cli")]
+#[command(about = "OneAmp - A Winamp-like audio player CLI for Linux", long_about = None)]
 struct Args {
     /// Path to the audio file to play
     #[arg(value_name = "FILE")]
@@ -171,7 +171,7 @@ fn main() -> Result<()> {
         anyhow::bail!("Unsupported file format: {}. Supported formats: MP3, FLAC", ext);
     }
     
-    println!("\n🎧 Rusty Player CLI v{}", env!("CARGO_PKG_VERSION"));
+    println!("\n🎧 OneAmp CLI v{}", env!("CARGO_PKG_VERSION"));
     
     // Display metadata
     if args.verbose {
@@ -181,7 +181,7 @@ fn main() -> Result<()> {
     // Play the audio file
     play_audio(&args.file)?;
     
-    println!("\n👋 Thanks for using Rusty Player!\n");
+    println!("\n👋 Thanks for using OneAmp!\n");
     
     Ok(())
 }

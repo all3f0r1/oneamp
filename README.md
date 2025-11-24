@@ -1,4 +1,4 @@
-# Winamp-like Audio Player for Linux in Rust
+# OneAmp - A Winamp-like Audio Player for Linux in Rust
 
 **Author:** Manus AI  
 **Date:** November 24, 2025  
@@ -325,6 +325,17 @@ The basic audio engine and CLI player have been implemented. The application can
 - Play audio using rodio
 - Display track metadata and playback progress
 - Handle command-line arguments
+
+**✅ Milestone 2: COMPLETED**
+
+The GUI application with basic controls has been implemented:
+- Modern dark theme inspired by Winamp
+- File selection dialog for opening audio files
+- Play/Pause/Stop controls
+- Real-time progress bar
+- Track metadata display (title, artist, album, technical info)
+- Multi-threaded architecture (GUI thread + Audio thread)
+- Event-based communication between threads
 
 ---
 

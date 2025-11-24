@@ -1,0 +1,25 @@
+[package]
+name = "oneamp-desktop"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "OneAmp - Desktop GUI application"
+
+[[bin]]
+name = "oneamp"
+path = "src/main.rs"
+
+[dependencies]
+# Core audio engine
+oneamp-core = { path = "../oneamp-core" }
+
+# GUI framework
+eframe = "0.30"
+egui = "0.30"
+
+# Error handling
+anyhow.workspace = true
+
+# File dialogs
+rfd = "0.15"
