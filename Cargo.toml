@@ -1,0 +1,23 @@
+[package]
+name = "rusty-player-cli"
+version = "0.1.0"
+edition = "2021"
+authors = ["Manus AI"]
+description = "A Winamp-like audio player for Linux written in Rust - CLI version"
+license = "MIT"
+
+[dependencies]
+# Audio decoding
+symphonia = { version = "0.5", features = ["mp3", "flac"] }
+
+# Audio playback
+rodio = "0.19"
+
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive"] }
+
+# Error handling
+anyhow = "1.0"
+
+# Progress display
+indicatif = "0.17"
