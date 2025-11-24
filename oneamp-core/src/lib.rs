@@ -69,6 +69,8 @@ pub enum AudioEvent {
     RequestPrevious,
     /// Equalizer state updated (enabled, gains)
     EqualizerUpdated(bool, Vec<f32>),
+    /// Audio samples for visualization
+    VisualizationData(Vec<f32>),
     /// Error occurred
     Error(String),
 }
@@ -227,6 +229,10 @@ fn audio_thread_main(
     // Create equalizer (shared between audio processing and command handling)
     let equalizer = std::sync::Arc::new(std::sync::Mutex::new(Equalizer::new(44100.0)));
     
+    // Create audio capture buffer for visualization
+    let capture_buffer = std::sync::Arc::new(std::sync::Mutex::new(AudioCaptureBuffer::new(2048)));
+    let capture_buffer_clone = capture_buffer.clone();
+    
     loop {
         // Check for commands
         if let Ok(cmd) = command_rx.try_recv() {
@@ -242,7 +248,7 @@ fn audio_thread_main(
                             let _ = event_tx.send(AudioEvent::TrackLoaded(track_info));
                             
                             // Load and play the file
-                            match load_and_play(&path, &stream_handle, equalizer.clone()) {
+                            match load_and_play(&path, &stream_handle, equalizer.clone(), capture_buffer.clone()) {
                                 Ok(new_sink) => {
                                     sink = Some(new_sink);
                                     is_paused = false;
@@ -351,6 +357,12 @@ fn audio_thread_main(
                     let total_duration = track.duration_secs.unwrap_or(0.0);
                     let _ = event_tx.send(AudioEvent::Position(current_pos, total_duration));
                 }
+                
+                // Send visualization data
+                if let Ok(buffer) = capture_buffer_clone.lock() {
+                    let samples = buffer.get_samples().to_vec();
+                    let _ = event_tx.send(AudioEvent::VisualizationData(samples));
+                }
             }
         }
         
@@ -366,6 +378,7 @@ fn load_and_play(
     path: &PathBuf,
     stream_handle: &OutputStreamHandle,
     equalizer: std::sync::Arc<std::sync::Mutex<Equalizer>>,
+    capture_buffer: std::sync::Arc<std::sync::Mutex<AudioCaptureBuffer>>,
 ) -> Result<Sink> {
     let file = BufReader::new(
         File::open(path).context("Failed to open audio file for playback")?
@@ -376,8 +389,11 @@ fn load_and_play(
     // Wrap source with equalizer
     let eq_source = EqualizerSource::new(source, equalizer);
     
+    // Wrap with audio capture for visualization
+    let capture_source = AudioCaptureSource::new(eq_source, capture_buffer);
+    
     let sink = Sink::try_new(stream_handle).context("Failed to create audio sink")?;
-    sink.append(eq_source);
+    sink.append(capture_source);
     
     Ok(sink)
 }

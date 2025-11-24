@@ -385,6 +385,46 @@ Modern theme and packaging:
 
 **🎉 Version 0.5.0 is now stable and ready for production use!**
 
+**✅ Version 0.6.0: FEATURE-RICH RELEASE**
+
+Major feature additions inspired by Winamp:
+
+**Keyboard Shortcuts (Winamp-style)**:
+- X: Play/Resume | C: Pause/Unpause | V: Stop
+- B: Next Track | Z: Previous Track
+- Home/End: First/Last Track
+- Ctrl+L: Open File | Alt+G: Toggle Equalizer
+
+**Extended Format Support**:
+- Added OGG Vorbis (.ogg) support
+- Added WAV (.wav) support
+- All formats benefit from equalizer and visualization
+
+**Audio Visualization**:
+- Real-time oscilloscope (waveform display)
+- Spectrum analyzer (64-band frequency display)
+- Click to toggle between modes
+- Integrated in central panel
+
+**Playlist Sorting**:
+- Sort by Title, Filename, or Path
+- Shuffle and Reverse options
+- Preserves current track during sort
+- Menu-based interface
+
+**New "1AMP" Logo**:
+- Modern flat design with cyan glow
+- Professional appearance
+- Multiple sizes for hicolor integration
+
+**Welcome Jingle**:
+- "OneAmp... It really amplifies the penguin's dreams!"
+- Plays on first launch only
+- Humorous homage to Winamp's iconic jingle
+- Embedded in binary
+
+**🚀 Version 0.6.0 brings OneAmp to feature parity with classic Winamp!**
+
 ---
 
 ## References

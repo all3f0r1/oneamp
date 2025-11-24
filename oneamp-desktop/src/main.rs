@@ -5,6 +5,9 @@ use std::path::PathBuf;
 mod config;
 use config::AppConfig;
 
+mod visualizer;
+use visualizer::{Visualizer, VisualizationType};
+
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -65,6 +68,8 @@ struct OneAmpApp {
     eq_gains: Vec<f32>,
     eq_frequencies: Vec<f32>,
     show_equalizer: bool,
+    // Visualizer
+    visualizer: Visualizer,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +86,27 @@ impl Default for OneAmpApp {
 }
 
 impl OneAmpApp {
+    /// Play the welcome jingle (first run only)
+    fn play_jingle() {
+        // Jingle is embedded in the binary
+        const JINGLE_DATA: &[u8] = include_bytes!("../../packaging/jingle.wav");
+        
+        // Play in a separate thread to not block startup
+        std::thread::spawn(move || {
+            use rodio::{Decoder, OutputStream};
+            use std::io::Cursor;
+            
+            if let Ok((_stream, handle)) = OutputStream::try_default() {
+                if let Ok(source) = Decoder::new(Cursor::new(JINGLE_DATA)) {
+                    if let Ok(sink) = rodio::Sink::try_new(&handle) {
+                        sink.append(source);
+                        sink.sleep_until_end();
+                    }
+                }
+            }
+        });
+    }
+    
     fn new() -> Self {
         let audio_engine = match AudioEngine::new() {
             Ok(engine) => Some(engine),
@@ -91,7 +117,12 @@ impl OneAmpApp {
         };
         
         // Load configuration
-        let config = AppConfig::load();
+        let (config, is_first_run) = AppConfig::load();
+        
+        // Play jingle on first run
+        if is_first_run {
+            Self::play_jingle();
+        }
         
         let app = Self {
             audio_engine,
@@ -107,6 +138,7 @@ impl OneAmpApp {
             eq_gains: config.equalizer.gains.clone(),
             eq_frequencies: vec![31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0],
             show_equalizer: false,
+            visualizer: Visualizer::new(),
         };
         
         // Apply loaded equalizer settings
@@ -120,7 +152,7 @@ impl OneAmpApp {
     
     fn open_file(&mut self) {
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Audio Files", &["mp3", "flac"])
+            .add_filter("Audio Files", &["mp3", "flac", "ogg", "wav"])
             .pick_file()
         {
             self.play_file(path);
@@ -129,7 +161,7 @@ impl OneAmpApp {
     
     fn add_files_to_playlist(&mut self) {
         if let Some(paths) = rfd::FileDialog::new()
-            .add_filter("Audio Files", &["mp3", "flac"])
+            .add_filter("Audio Files", &["mp3", "flac", "ogg", "wav"])
             .pick_files()
         {
             for path in paths {
@@ -147,7 +179,7 @@ impl OneAmpApp {
                     let path = entry.path();
                     if path.is_file() {
                         if let Some(ext) = path.extension() {
-                            if ["mp3", "flac"].contains(&ext.to_str().unwrap_or("")) {
+                            if ["mp3", "flac", "ogg", "wav"].contains(&ext.to_str().unwrap_or("")) {
                                 if !self.playlist.contains(&path) {
                                     self.playlist.push(path);
                                 }
@@ -185,6 +217,112 @@ impl OneAmpApp {
         self.playlist.clear();
         self.current_track_index = None;
         self.selected_track_index = None;
+    }
+    
+    fn sort_playlist_by_title(&mut self) {
+        use oneamp_core::TrackInfo;
+        
+        // Create a vec of (index, title, path)
+        let mut tracks: Vec<(usize, String, PathBuf)> = self.playlist
+            .iter()
+            .enumerate()
+            .map(|(i, path)| {
+                let title = TrackInfo::from_file(path)
+                    .ok()
+                    .and_then(|t| t.title)
+                    .unwrap_or_else(|| path.file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("Unknown")
+                        .to_string());
+                (i, title.to_lowercase(), path.clone())
+            })
+            .collect();
+        
+        // Sort by title
+        tracks.sort_by(|a, b| a.1.cmp(&b.1));
+        
+        // Update playlist and indices
+        self.playlist = tracks.iter().map(|(_, _, path)| path.clone()).collect();
+        self.update_indices_after_sort(&tracks.iter().map(|(i, _, _)| *i).collect::<Vec<_>>());
+    }
+    
+    fn sort_playlist_by_filename(&mut self) {
+        let mut tracks: Vec<(usize, String, PathBuf)> = self.playlist
+            .iter()
+            .enumerate()
+            .map(|(i, path)| {
+                let filename = path.file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                (i, filename, path.clone())
+            })
+            .collect();
+        
+        tracks.sort_by(|a, b| a.1.cmp(&b.1));
+        self.playlist = tracks.iter().map(|(_, _, path)| path.clone()).collect();
+        self.update_indices_after_sort(&tracks.iter().map(|(i, _, _)| *i).collect::<Vec<_>>());
+    }
+    
+    fn sort_playlist_by_path(&mut self) {
+        let mut tracks: Vec<(usize, PathBuf)> = self.playlist
+            .iter()
+            .enumerate()
+            .map(|(i, path)| (i, path.clone()))
+            .collect();
+        
+        tracks.sort_by(|a, b| a.1.cmp(&b.1));
+        self.playlist = tracks.iter().map(|(_, path)| path.clone()).collect();
+        self.update_indices_after_sort(&tracks.iter().map(|(i, _)| *i).collect::<Vec<_>>());
+    }
+    
+    fn shuffle_playlist(&mut self) {
+        use rand::seq::SliceRandom;
+        use rand::thread_rng;
+        
+        let mut indices: Vec<usize> = (0..self.playlist.len()).collect();
+        let mut rng = thread_rng();
+        indices.shuffle(&mut rng);
+        
+        let mut new_playlist = Vec::with_capacity(self.playlist.len());
+        for &i in &indices {
+            new_playlist.push(self.playlist[i].clone());
+        }
+        
+        self.playlist = new_playlist;
+        self.update_indices_after_sort(&indices);
+    }
+    
+    fn reverse_playlist(&mut self) {
+        self.playlist.reverse();
+        
+        // Update current track index
+        if let Some(idx) = self.current_track_index {
+            self.current_track_index = Some(self.playlist.len() - 1 - idx);
+        }
+        
+        // Update selected track index
+        if let Some(idx) = self.selected_track_index {
+            self.selected_track_index = Some(self.playlist.len() - 1 - idx);
+        }
+    }
+    
+    fn update_indices_after_sort(&mut self, old_to_new: &[usize]) {
+        // Create a mapping from old index to new index
+        let mut new_positions = vec![0; old_to_new.len()];
+        for (new_idx, &old_idx) in old_to_new.iter().enumerate() {
+            new_positions[old_idx] = new_idx;
+        }
+        
+        // Update current track index
+        if let Some(idx) = self.current_track_index {
+            self.current_track_index = Some(new_positions[idx]);
+        }
+        
+        // Update selected track index
+        if let Some(idx) = self.selected_track_index {
+            self.selected_track_index = Some(new_positions[idx]);
+        }
     }
     
     fn play_track_at_index(&mut self, index: usize) {
@@ -297,6 +435,9 @@ impl OneAmpApp {
                     self.eq_enabled = enabled;
                     self.eq_gains = gains;
                 }
+                AudioEvent::VisualizationData(samples) => {
+                    self.visualizer.update(&samples);
+                }
                 AudioEvent::Error(msg) => {
                     self.error_message = Some(msg);
                     self.playback_state = PlaybackState::Stopped;
@@ -307,6 +448,95 @@ impl OneAmpApp {
 }
 
 impl OneAmpApp {
+    /// Handle keyboard shortcuts (Winamp-style)
+    fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
+        ctx.input(|i| {
+            // Playback controls
+            if i.key_pressed(egui::Key::X) {
+                // X - Play
+                if let Some(ref engine) = self.audio_engine {
+                    if self.playback_state == PlaybackState::Paused {
+                        let _ = engine.send_command(AudioCommand::Resume);
+                    } else if !self.playlist.is_empty() && self.current_track_index.is_none() {
+                        self.play_track_at_index(0);
+                    }
+                }
+            }
+            
+            if i.key_pressed(egui::Key::C) {
+                // C - Pause/Unpause
+                if let Some(ref engine) = self.audio_engine {
+                    match self.playback_state {
+                        PlaybackState::Playing => {
+                            let _ = engine.send_command(AudioCommand::Pause);
+                        }
+                        PlaybackState::Paused => {
+                            let _ = engine.send_command(AudioCommand::Resume);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            
+            if i.key_pressed(egui::Key::V) {
+                // V - Stop
+                if let Some(ref engine) = self.audio_engine {
+                    let _ = engine.send_command(AudioCommand::Stop);
+                }
+            }
+            
+            if i.key_pressed(egui::Key::B) {
+                // B - Next track
+                if let Some(ref engine) = self.audio_engine {
+                    let _ = engine.send_command(AudioCommand::Next);
+                }
+            }
+            
+            if i.key_pressed(egui::Key::Z) {
+                // Z - Previous track
+                if let Some(ref engine) = self.audio_engine {
+                    let _ = engine.send_command(AudioCommand::Previous);
+                }
+            }
+            
+            // Volume control (not implemented in audio engine yet, but reserved)
+            // if i.key_pressed(egui::Key::ArrowUp) {
+            //     // Volume up
+            // }
+            // if i.key_pressed(egui::Key::ArrowDown) {
+            //     // Volume down
+            // }
+            
+            // Playlist navigation
+            if i.key_pressed(egui::Key::Home) {
+                // Jump to first track
+                if !self.playlist.is_empty() {
+                    self.play_track_at_index(0);
+                }
+            }
+            
+            if i.key_pressed(egui::Key::End) {
+                // Jump to last track
+                if !self.playlist.is_empty() {
+                    let last_index = self.playlist.len() - 1;
+                    self.play_track_at_index(last_index);
+                }
+            }
+            
+            // File operations
+            if i.modifiers.ctrl && i.key_pressed(egui::Key::L) {
+                // Ctrl+L - Open file
+                self.open_file();
+            }
+            
+            // Equalizer toggle
+            if i.modifiers.alt && i.key_pressed(egui::Key::G) {
+                // Alt+G - Toggle equalizer
+                self.show_equalizer = !self.show_equalizer;
+            }
+        });
+    }
+    
     /// Apply custom modern theme
     fn apply_custom_theme(ctx: &egui::Context) {
         use egui::{Color32, Rounding, Stroke, Vec2};
@@ -363,6 +593,9 @@ impl eframe::App for OneAmpApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Apply custom theme
         Self::apply_custom_theme(ctx);
+        
+        // Handle keyboard shortcuts
+        self.handle_keyboard_shortcuts(ctx);
         
         // Process audio events
         self.process_audio_events();
@@ -488,6 +721,32 @@ impl eframe::App for OneAmpApp {
                     }
                 });
                 
+                // Sort controls
+                ui.horizontal(|ui| {
+                    ui.menu_button("⬍ Sort", |ui| {
+                        if ui.button("By Title").clicked() {
+                            self.sort_playlist_by_title();
+                            ui.close_menu();
+                        }
+                        if ui.button("By Filename").clicked() {
+                            self.sort_playlist_by_filename();
+                            ui.close_menu();
+                        }
+                        if ui.button("By Path").clicked() {
+                            self.sort_playlist_by_path();
+                            ui.close_menu();
+                        }
+                        if ui.button("Shuffle").clicked() {
+                            self.shuffle_playlist();
+                            ui.close_menu();
+                        }
+                        if ui.button("Reverse").clicked() {
+                            self.reverse_playlist();
+                            ui.close_menu();
+                        }
+                    });
+                });
+                
                 ui.separator();
                 
                 // Playlist items
@@ -596,6 +855,29 @@ impl eframe::App for OneAmpApp {
                                 ui.end_row();
                             });
                     });
+                    
+                    ui.add_space(20.0);
+                    
+                    // Visualizer
+                    let viz_height = 80.0;
+                    let viz_rect = ui.allocate_space(egui::Vec2::new(ui.available_width().min(400.0), viz_height)).1;
+                    
+                    // Make visualizer clickable to toggle type
+                    let response = ui.allocate_rect(viz_rect, egui::Sense::click());
+                    if response.clicked() {
+                        self.visualizer.toggle_type();
+                    }
+                    
+                    // Draw visualizer
+                    self.visualizer.draw(ui, viz_rect);
+                    
+                    // Show current viz type
+                    ui.add_space(4.0);
+                    ui.label(
+                        egui::RichText::new(format!("📊 {} (click to switch)", self.visualizer.viz_type().name()))
+                            .size(12.0)
+                            .color(egui::Color32::from_rgb(120, 120, 120))
+                    );
                 } else {
                     ui.add_space(60.0);
                     ui.label(
@@ -690,6 +972,7 @@ impl eframe::App for OneAmpApp {
                 enabled: self.eq_enabled,
                 gains: self.eq_gains.clone(),
             },
+            first_run: false,
         };
         if let Err(e) = config.save() {
             eprintln!("Failed to save configuration: {}", e);

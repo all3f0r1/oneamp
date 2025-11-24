@@ -21,12 +21,19 @@ impl Default for EqualizerConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub equalizer: EqualizerConfig,
+    #[serde(default = "default_first_run")]
+    pub first_run: bool,
+}
+
+fn default_first_run() -> bool {
+    true
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             equalizer: EqualizerConfig::default(),
+            first_run: true,
         }
     }
 }
@@ -48,14 +55,19 @@ impl AppConfig {
     }
     
     /// Load configuration from file
-    pub fn load() -> Self {
+    /// Returns (config, is_first_run)
+    pub fn load() -> (Self, bool) {
         match Self::config_path() {
             Ok(path) => {
                 if path.exists() {
                     match fs::read_to_string(&path) {
                         Ok(content) => {
-                            match serde_json::from_str(&content) {
-                                Ok(config) => return config,
+                            match serde_json::from_str::<AppConfig>(&content) {
+                                Ok(mut config) => {
+                                    let is_first = config.first_run;
+                                    config.first_run = false;
+                                    return (config, is_first);
+                                }
                                 Err(e) => eprintln!("Failed to parse config: {}", e),
                             }
                         }
@@ -66,8 +78,8 @@ impl AppConfig {
             Err(e) => eprintln!("Failed to get config path: {}", e),
         }
         
-        // Return default config if loading failed
-        Self::default()
+        // Return default config if loading failed (first run)
+        (Self::default(), true)
     }
     
     /// Save configuration to file

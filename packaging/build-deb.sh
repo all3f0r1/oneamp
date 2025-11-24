@@ -5,7 +5,7 @@ set -e
 # This script creates a .deb package for OneAmp
 
 PACKAGE_NAME="oneamp"
-VERSION="0.5.0"
+VERSION="0.6.0"
 ARCH="amd64"
 MAINTAINER="OneAmp Team <oneamp@example.com>"
 DESCRIPTION="Modern audio player inspired by Winamp"
