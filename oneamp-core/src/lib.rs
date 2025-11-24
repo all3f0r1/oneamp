@@ -11,6 +11,11 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
+pub mod equalizer;
+pub mod eq_source;
+pub use equalizer::Equalizer;
+pub use eq_source::EqualizerSource;
+
 /// Commands that can be sent to the audio thread
 #[derive(Debug, Clone)]
 pub enum AudioCommand {
@@ -28,6 +33,14 @@ pub enum AudioCommand {
     Next,
     /// Play previous track in playlist
     Previous,
+    /// Set equalizer enabled state
+    SetEqualizerEnabled(bool),
+    /// Set equalizer band gain (band_index, gain_db)
+    SetEqualizerBand(usize, f32),
+    /// Set all equalizer bands at once
+    SetEqualizerBands(Vec<f32>),
+    /// Reset equalizer to flat response
+    ResetEqualizer,
     /// Shutdown the audio thread
     Shutdown,
 }
@@ -51,6 +64,8 @@ pub enum AudioEvent {
     RequestNext,
     /// Request previous track from playlist
     RequestPrevious,
+    /// Equalizer state updated (enabled, gains)
+    EqualizerUpdated(bool, Vec<f32>),
     /// Error occurred
     Error(String),
 }
@@ -206,6 +221,9 @@ fn audio_thread_main(
     let mut current_track: Option<TrackInfo> = None;
     let mut is_paused = false;
     
+    // Create equalizer (shared between audio processing and command handling)
+    let equalizer = std::sync::Arc::new(std::sync::Mutex::new(Equalizer::new(44100.0)));
+    
     loop {
         // Check for commands
         if let Ok(cmd) = command_rx.try_recv() {
@@ -221,7 +239,7 @@ fn audio_thread_main(
                             let _ = event_tx.send(AudioEvent::TrackLoaded(track_info));
                             
                             // Load and play the file
-                            match load_and_play(&path, &stream_handle) {
+                            match load_and_play(&path, &stream_handle, equalizer.clone()) {
                                 Ok(new_sink) => {
                                     sink = Some(new_sink);
                                     is_paused = false;
@@ -278,6 +296,37 @@ fn audio_thread_main(
                     is_paused = false;
                     let _ = event_tx.send(AudioEvent::RequestPrevious);
                 }
+                AudioCommand::SetEqualizerEnabled(enabled) => {
+                    if let Ok(mut eq) = equalizer.lock() {
+                        eq.set_enabled(enabled);
+                        let gains = eq.get_all_gains().to_vec();
+                        let _ = event_tx.send(AudioEvent::EqualizerUpdated(enabled, gains));
+                    }
+                }
+                AudioCommand::SetEqualizerBand(band_index, gain_db) => {
+                    if let Ok(mut eq) = equalizer.lock() {
+                        eq.set_band_gain(band_index, gain_db);
+                        let enabled = eq.is_enabled();
+                        let gains = eq.get_all_gains().to_vec();
+                        let _ = event_tx.send(AudioEvent::EqualizerUpdated(enabled, gains));
+                    }
+                }
+                AudioCommand::SetEqualizerBands(gains) => {
+                    if let Ok(mut eq) = equalizer.lock() {
+                        eq.set_all_gains(&gains);
+                        let enabled = eq.is_enabled();
+                        let gains = eq.get_all_gains().to_vec();
+                        let _ = event_tx.send(AudioEvent::EqualizerUpdated(enabled, gains));
+                    }
+                }
+                AudioCommand::ResetEqualizer => {
+                    if let Ok(mut eq) = equalizer.lock() {
+                        eq.reset_all_bands();
+                        let enabled = eq.is_enabled();
+                        let gains = eq.get_all_gains().to_vec();
+                        let _ = event_tx.send(AudioEvent::EqualizerUpdated(enabled, gains));
+                    }
+                }
                 AudioCommand::Shutdown => {
                     break;
                 }
@@ -310,15 +359,22 @@ fn audio_thread_main(
 }
 
 /// Load and play an audio file
-fn load_and_play(path: &PathBuf, stream_handle: &OutputStreamHandle) -> Result<Sink> {
+fn load_and_play(
+    path: &PathBuf,
+    stream_handle: &OutputStreamHandle,
+    equalizer: std::sync::Arc<std::sync::Mutex<Equalizer>>,
+) -> Result<Sink> {
     let file = BufReader::new(
         File::open(path).context("Failed to open audio file for playback")?
     );
     
     let source = Decoder::new(file).context("Failed to decode audio file")?;
     
+    // Wrap source with equalizer
+    let eq_source = EqualizerSource::new(source, equalizer);
+    
     let sink = Sink::try_new(stream_handle).context("Failed to create audio sink")?;
-    sink.append(source);
+    sink.append(eq_source);
     
     Ok(sink)
 }

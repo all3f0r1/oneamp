@@ -2,6 +2,9 @@ use eframe::egui;
 use oneamp_core::{AudioCommand, AudioEngine, AudioEvent, TrackInfo};
 use std::path::PathBuf;
 
+mod config;
+use config::AppConfig;
+
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -57,6 +60,11 @@ struct OneAmpApp {
     playlist: Vec<PathBuf>,
     current_track_index: Option<usize>,
     selected_track_index: Option<usize>,
+    // Equalizer
+    eq_enabled: bool,
+    eq_gains: Vec<f32>,
+    eq_frequencies: Vec<f32>,
+    show_equalizer: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -82,7 +90,10 @@ impl OneAmpApp {
             }
         };
         
-        Self {
+        // Load configuration
+        let config = AppConfig::load();
+        
+        let app = Self {
             audio_engine,
             current_track: None,
             playback_state: PlaybackState::Stopped,
@@ -92,7 +103,19 @@ impl OneAmpApp {
             playlist: Vec::new(),
             current_track_index: None,
             selected_track_index: None,
+            eq_enabled: config.equalizer.enabled,
+            eq_gains: config.equalizer.gains.clone(),
+            eq_frequencies: vec![31.25, 62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0],
+            show_equalizer: false,
+        };
+        
+        // Apply loaded equalizer settings
+        if let Some(ref engine) = app.audio_engine {
+            let _ = engine.send_command(AudioCommand::SetEqualizerEnabled(config.equalizer.enabled));
+            let _ = engine.send_command(AudioCommand::SetEqualizerBands(config.equalizer.gains));
         }
+        
+        app
     }
     
     fn open_file(&mut self) {
@@ -270,6 +293,10 @@ impl OneAmpApp {
                 AudioEvent::RequestPrevious => {
                     self.play_previous();
                 }
+                AudioEvent::EqualizerUpdated(enabled, gains) => {
+                    self.eq_enabled = enabled;
+                    self.eq_gains = gains;
+                }
                 AudioEvent::Error(msg) => {
                     self.error_message = Some(msg);
                     self.playback_state = PlaybackState::Stopped;
@@ -294,6 +321,10 @@ impl eframe::App for OneAmpApp {
                 ui.heading("🎧 OneAmp");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(format!("v{}", env!("CARGO_PKG_VERSION")));
+                    ui.add_space(8.0);
+                    if ui.button("🎵 Equalizer").clicked() {
+                        self.show_equalizer = !self.show_equalizer;
+                    }
                 });
             });
             ui.add_space(4.0);
@@ -527,9 +558,88 @@ impl eframe::App for OneAmpApp {
                 }
             });
         });
+        
+        // Equalizer window
+        if self.show_equalizer {
+            egui::Window::new("🎵 Equalizer")
+                .default_width(400.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ui.add_space(8.0);
+                    
+                    // Enable/Disable checkbox
+                    let mut enabled = self.eq_enabled;
+                    if ui.checkbox(&mut enabled, "Enable Equalizer").changed() {
+                        self.eq_enabled = enabled;
+                        if let Some(ref engine) = self.audio_engine {
+                            let _ = engine.send_command(AudioCommand::SetEqualizerEnabled(enabled));
+                        }
+                    }
+                    
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    
+                    // Reset button
+                    ui.horizontal(|ui| {
+                        if ui.button("🔄 Reset All").clicked() {
+                            if let Some(ref engine) = self.audio_engine {
+                                let _ = engine.send_command(AudioCommand::ResetEqualizer);
+                            }
+                        }
+                    });
+                    
+                    ui.add_space(12.0);
+                    
+                    // Equalizer sliders
+                    ui.vertical(|ui| {
+                        for i in 0..10 {
+                            ui.horizontal(|ui| {
+                                let freq = self.eq_frequencies[i];
+                                let freq_label = if freq < 1000.0 {
+                                    format!("{:.0} Hz", freq)
+                                } else {
+                                    format!("{:.1} kHz", freq / 1000.0)
+                                };
+                                
+                                ui.label(egui::RichText::new(freq_label).size(14.0).monospace());
+                                ui.add_space(8.0);
+                                
+                                let mut gain = self.eq_gains[i];
+                                let slider = egui::Slider::new(&mut gain, -12.0..=12.0)
+                                    .suffix(" dB")
+                                    .step_by(0.5)
+                                    .show_value(true);
+                                
+                                if ui.add(slider).changed() {
+                                    self.eq_gains[i] = gain;
+                                    if let Some(ref engine) = self.audio_engine {
+                                        let _ = engine.send_command(AudioCommand::SetEqualizerBand(i, gain));
+                                    }
+                                }
+                            });
+                            ui.add_space(4.0);
+                        }
+                    });
+                    
+                    ui.add_space(8.0);
+                });
+        }
     }
     
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Save configuration
+        let config = AppConfig {
+            equalizer: config::EqualizerConfig {
+                enabled: self.eq_enabled,
+                gains: self.eq_gains.clone(),
+            },
+        };
+        if let Err(e) = config.save() {
+            eprintln!("Failed to save configuration: {}", e);
+        }
+        
+        // Shutdown audio engine
         if let Some(engine) = self.audio_engine.take() {
             let _ = engine.shutdown();
         }
