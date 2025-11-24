@@ -1,0 +1,48 @@
+# OneAmp Theme Configuration Example
+# Copy this file to theme.toml and customize as desired
+
+name = "Winamp Modern"
+
+[colors]
+# Main window colors
+window_bg = [40, 45, 55]
+panel_bg = [30, 35, 45]
+border = [60, 65, 75]
+
+# Display colors (timer, track info)
+display_bg = [15, 20, 35]
+display_text = [100, 180, 255]
+display_accent = [150, 220, 255]
+
+# Button colors
+button_normal = [70, 75, 85]
+button_hovered = [90, 95, 105]
+button_active = [110, 115, 125]
+
+# Progress bar
+progress_bg = [50, 55, 65]
+progress_fill = [100, 180, 255]
+
+# Playlist
+playlist_bg = [25, 30, 40]
+playlist_text = [200, 200, 200]
+playlist_selected = [60, 100, 150]
+playlist_playing = [100, 180, 255]
+
+# Equalizer
+eq_slider = [70, 75, 85]
+eq_fill = [100, 180, 255]
+
+[fonts]
+timer_size = 32.0
+track_info_size = 14.0
+playlist_size = 13.0
+button_size = 12.0
+
+[layout]
+window_min_width = 600.0
+window_min_height = 500.0
+player_height = 150.0
+equalizer_height = 180.0
+spacing = 8.0
+padding = 10.0

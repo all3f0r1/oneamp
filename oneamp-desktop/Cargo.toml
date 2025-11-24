@@ -34,3 +34,9 @@ rand = "0.8"
 
 # FFT for spectrum analyzer
 rustfft = "6.2"
+
+# Theme configuration
+toml = "0.8"
+
+# ID3 tag reading
+lofty = "0.21"
