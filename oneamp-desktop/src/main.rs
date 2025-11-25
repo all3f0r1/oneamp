@@ -34,6 +34,9 @@ use album_art::AlbumArtDisplay;
 mod window_chrome;
 use window_chrome::{WindowChrome, WindowAction};
 
+mod onedrop_visualizer;
+use onedrop_visualizer::OneDropVisualizer;
+
 fn main() -> eframe::Result {
     let theme = Theme::default();
     
@@ -94,6 +97,10 @@ struct OneAmpApp {
     equalizer_display: EqualizerDisplay,
     album_art: AlbumArtDisplay,
     window_chrome: WindowChrome,
+    
+    // OneDrop visualizer
+    onedrop: Option<OneDropVisualizer>,
+    use_onedrop: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -140,7 +147,27 @@ impl OneAmpApp {
             equalizer_display: EqualizerDisplay::new(10),
             album_art: AlbumArtDisplay::new(),
             window_chrome: WindowChrome::new(),
+            onedrop: None,  // Will be initialized asynchronously
+            use_onedrop: false,
         };
+        
+        // Initialize OneDrop visualizer asynchronously
+        app.onedrop = pollster::block_on(async {
+            match OneDropVisualizer::new(800, 600).await {
+                Ok(mut visualizer) => {
+                    // Try to load presets from onedrop directory
+                    let preset_dir = std::path::PathBuf::from("../../onedrop/test-presets");
+                    if preset_dir.exists() {
+                        let _ = visualizer.load_presets(&preset_dir);
+                    }
+                    Some(visualizer)
+                }
+                Err(e) => {
+                    eprintln!("Failed to initialize OneDrop visualizer: {}", e);
+                    None
+                }
+            }
+        });
         
         if let Some(ref engine) = app.audio_engine {
             let _ = engine.send_command(AudioCommand::SetEqualizerEnabled(config.equalizer.enabled));
@@ -476,6 +503,56 @@ impl eframe::App for OneAmpApp {
                             ControlAction::None => {}
                         }
                     });
+                });
+                
+                ui.add_space(8.0);
+                ui.separator();
+                
+                // VISUALIZER TOGGLE
+                ui.horizontal(|ui| {
+                    ui.label("Visualizer:");
+                    
+                    if ui.selectable_label(!self.use_onedrop, "Spectrum").clicked() {
+                        self.use_onedrop = false;
+                        if let Some(ref mut onedrop) = self.onedrop {
+                            onedrop.set_enabled(false);
+                        }
+                    }
+                    
+                    if let Some(ref onedrop) = self.onedrop {
+                        if onedrop.has_presets() {
+                            if ui.selectable_label(self.use_onedrop, "Milkdrop").clicked() {
+                                self.use_onedrop = true;
+                                if let Some(ref mut onedrop) = self.onedrop {
+                                    onedrop.set_enabled(true);
+                                }
+                            }
+                            
+                            if self.use_onedrop {
+                                ui.separator();
+                                
+                                if ui.button("◄").clicked() {
+                                    if let Some(ref mut onedrop) = self.onedrop {
+                                        let _ = onedrop.previous_preset();
+                                    }
+                                }
+                                
+                                if let Some(preset_name) = onedrop.current_preset_name() {
+                                    ui.label(format!("[{}/{}] {}", 
+                                        onedrop.current_preset_index(),
+                                        onedrop.preset_count(),
+                                        preset_name
+                                    ));
+                                }
+                                
+                                if ui.button("►").clicked() {
+                                    if let Some(ref mut onedrop) = self.onedrop {
+                                        let _ = onedrop.next_preset();
+                                    }
+                                }
+                            }
+                        }
+                    }
                 });
                 
                 ui.add_space(8.0);

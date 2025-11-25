@@ -43,3 +43,9 @@ lofty = "0.21"
 
 # Image decoding for album art
 image = "0.25"
+
+# OneDrop (Milkdrop) visualizer integration
+onedrop-engine = { path = "../../onedrop/onedrop-engine" }
+onedrop-renderer = { path = "../../onedrop/onedrop-renderer" }
+wgpu = "22.1"
+pollster = "0.3"
