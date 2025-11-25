@@ -15,7 +15,7 @@ path = "src/main.rs"
 oneamp-core = { path = "../oneamp-core" }
 
 # GUI framework
-eframe = "0.30"
+eframe = { version = "0.30", features = ["wgpu"] }
 egui = "0.30"
 
 # Error handling
@@ -47,5 +47,5 @@ image = "0.25"
 # OneDrop (Milkdrop) visualizer integration
 onedrop-engine = { path = "../../onedrop/onedrop-engine" }
 onedrop-renderer = { path = "../../onedrop/onedrop-renderer" }
-wgpu = "22.1"
+wgpu = "23.0"
 pollster = "0.3"

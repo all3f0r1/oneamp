@@ -1371,6 +1371,7 @@ dependencies = [
  "objc2-foundation 0.2.2",
  "parking_lot",
  "percent-encoding",
+ "pollster 0.4.0",
  "profiling",
  "raw-window-handle",
  "static_assertions",
@@ -1378,6 +1379,7 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
+ "wgpu 23.0.1",
  "winapi",
  "windows-sys 0.59.0",
  "winit",
@@ -2001,6 +2003,18 @@ dependencies = [
  "thiserror 1.0.69",
  "winapi",
  "windows 0.52.0",
+]
+
+[[package]]
+name = "gpu-allocator"
+version = "0.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c151a2a5ef800297b4e79efa4f4bec035c5f51d5ae587287c9b952bdf734cacd"
+dependencies = [
+ "log",
+ "presser",
+ "thiserror 1.0.69",
+ "windows 0.54.0",
 ]
 
 [[package]]
@@ -3176,7 +3190,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "oneamp-cli"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3187,7 +3201,7 @@ dependencies = [
 
 [[package]]
 name = "oneamp-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -3197,7 +3211,7 @@ dependencies = [
 
 [[package]]
 name = "oneamp-desktop"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -3215,7 +3229,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
- "wgpu 22.1.0",
+ "wgpu 23.0.1",
 ]
 
 [[package]]
@@ -4989,6 +5003,7 @@ dependencies = [
  "document-features",
  "js-sys",
  "log",
+ "naga 23.1.0",
  "parking_lot",
  "profiling",
  "raw-window-handle",
@@ -5070,7 +5085,7 @@ dependencies = [
  "glow 0.13.1",
  "glutin_wgl_sys",
  "gpu-alloc",
- "gpu-allocator",
+ "gpu-allocator 0.26.0",
  "gpu-descriptor",
  "hassle-rs",
  "js-sys",
@@ -5106,13 +5121,16 @@ dependencies = [
  "android_system_properties",
  "arrayvec",
  "ash",
+ "bit-set 0.8.0",
  "bitflags 2.10.0",
+ "block",
  "bytemuck",
  "cfg_aliases 0.1.1",
  "core-graphics-types",
  "glow 0.14.2",
  "glutin_wgl_sys",
  "gpu-alloc",
+ "gpu-allocator 0.27.0",
  "gpu-descriptor",
  "js-sys",
  "khronos-egl",
@@ -5126,6 +5144,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "profiling",
+ "range-alloc",
  "raw-window-handle",
  "renderdoc-sys",
  "rustc-hash 1.1.0",
@@ -5135,6 +5154,7 @@ dependencies = [
  "web-sys",
  "wgpu-types 23.0.0",
  "windows 0.58.0",
+ "windows-core 0.58.0",
 ]
 
 [[package]]

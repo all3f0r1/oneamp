@@ -9,6 +9,8 @@ pub struct OneDropVisualizer {
     presets: Vec<PathBuf>,
     current_index: usize,
     enabled: bool,
+    width: u32,
+    height: u32,
 }
 
 impl OneDropVisualizer {
@@ -32,6 +34,8 @@ impl OneDropVisualizer {
             presets: Vec::new(),
             current_index: 0,
             enabled: false,
+            width,
+            height,
         })
     }
     
@@ -40,7 +44,7 @@ impl OneDropVisualizer {
         let preset_dir = preset_dir.as_ref();
         
         if !preset_dir.exists() {
-            log::warn!("Preset directory does not exist: {:?}", preset_dir);
+            // Preset directory does not exist
             return Ok(());
         }
         
@@ -59,7 +63,7 @@ impl OneDropVisualizer {
         // Sort presets by name
         self.presets.sort();
         
-        log::info!("Loaded {} presets from {:?}", self.presets.len(), preset_dir);
+        // Loaded presets
         
         // Load first preset if available
         if !self.presets.is_empty() {
@@ -76,7 +80,7 @@ impl OneDropVisualizer {
         }
         
         let preset_path = &self.presets[self.current_index];
-        log::info!("Loading preset: {:?}", preset_path);
+        // Loading preset
         
         self.engine.load_preset(preset_path)?;
         
@@ -94,13 +98,14 @@ impl OneDropVisualizer {
         Ok(())
     }
     
-    /// Get the render texture (for display in egui)
-    pub fn render_texture(&self) -> Option<&wgpu::Texture> {
-        if !self.enabled {
-            return None;
-        }
-        
-        Some(self.engine.render_texture())
+    /// Get the render texture size
+    pub fn render_size(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+    
+    /// Check if visualizer is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
     }
     
     /// Navigate to next preset
@@ -161,11 +166,6 @@ impl OneDropVisualizer {
     /// Enable/disable visualizer
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
-    }
-    
-    /// Check if visualizer is enabled
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
     }
     
     /// Check if presets are loaded

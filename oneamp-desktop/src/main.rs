@@ -101,6 +101,12 @@ struct OneAmpApp {
     // OneDrop visualizer
     onedrop: Option<OneDropVisualizer>,
     use_onedrop: bool,
+    onedrop_texture_id: Option<egui::TextureId>,
+    visualizer_fullscreen: bool,
+    
+    // Performance monitoring
+    frame_times: std::collections::VecDeque<f32>,
+    show_fps: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -149,6 +155,10 @@ impl OneAmpApp {
             window_chrome: WindowChrome::new(),
             onedrop: None,  // Will be initialized asynchronously
             use_onedrop: false,
+            onedrop_texture_id: None,
+            visualizer_fullscreen: false,
+            frame_times: std::collections::VecDeque::with_capacity(60),
+            show_fps: false,
         };
         
         // Initialize OneDrop visualizer asynchronously
@@ -407,7 +417,7 @@ impl OneAmpApp {
 }
 
 impl eframe::App for OneAmpApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.theme.apply_to_egui(ctx);
         
         // Custom window chrome
@@ -431,6 +441,27 @@ impl eframe::App for OneAmpApp {
         self.handle_keyboard_shortcuts(ctx);
         self.handle_dropped_files(ctx);
         self.process_audio_events();
+        
+        // Update FPS counter
+        let delta_time = ctx.input(|i| i.unstable_dt);
+        self.frame_times.push_back(delta_time);
+        if self.frame_times.len() > 60 {
+            self.frame_times.pop_front();
+        }
+        
+        // Update OneDrop visualizer with audio samples
+        if self.use_onedrop {
+            if let Some(ref mut onedrop) = self.onedrop {
+                // Get audio samples from visualizer
+                let audio_samples = self.visualizer.get_spectrum();
+                // Convert spectrum to audio samples (simplified)
+                let samples: Vec<f32> = audio_samples.iter()
+                    .flat_map(|&v| vec![v, v])  // Duplicate for stereo
+                    .collect();
+                
+                let _ = onedrop.update(&samples, delta_time);
+            }
+        }
         
         // Update scroll animation
         if self.last_scroll_update.elapsed().as_millis() > 200 {
@@ -519,41 +550,87 @@ impl eframe::App for OneAmpApp {
                         }
                     }
                     
-                    if let Some(ref onedrop) = self.onedrop {
-                        if onedrop.has_presets() {
-                            if ui.selectable_label(self.use_onedrop, "Milkdrop").clicked() {
-                                self.use_onedrop = true;
-                                if let Some(ref mut onedrop) = self.onedrop {
-                                    onedrop.set_enabled(true);
+                    let has_presets = self.onedrop.as_ref().map_or(false, |od| od.has_presets());
+                    
+                    if has_presets {
+                        if ui.selectable_label(self.use_onedrop, "Milkdrop").clicked() {
+                            self.use_onedrop = true;
+                            if let Some(ref mut onedrop) = self.onedrop {
+                                onedrop.set_enabled(true);
+                            }
+                        }
+                        
+                        if self.use_onedrop {
+                            ui.separator();
+                            
+                            let mut action = None;
+                            
+                            if ui.button("◄").clicked() {
+                                action = Some("prev");
+                            }
+                            
+                            // Get preset info without holding borrow
+                            let preset_info = self.onedrop.as_ref().map(|od| {
+                                (od.current_preset_index(), od.preset_count(), od.current_preset_name())
+                            });
+                            
+                            if let Some((idx, count, name)) = preset_info {
+                                if let Some(preset_name) = name {
+                                    ui.label(format!("[{}/{}] {}", idx, count, preset_name));
                                 }
                             }
                             
-                            if self.use_onedrop {
-                                ui.separator();
-                                
-                                if ui.button("◄").clicked() {
-                                    if let Some(ref mut onedrop) = self.onedrop {
-                                        let _ = onedrop.previous_preset();
+                            if ui.button("►").clicked() {
+                                action = Some("next");
+                            }
+                            
+                            // Execute action after releasing borrow
+                            if let Some(action) = action {
+                                if let Some(ref mut onedrop) = self.onedrop {
+                                    match action {
+                                        "prev" => { let _ = onedrop.previous_preset(); }
+                                        "next" => { let _ = onedrop.next_preset(); }
+                                        _ => {}
                                     }
                                 }
+                            }
                                 
-                                if let Some(preset_name) = onedrop.current_preset_name() {
-                                    ui.label(format!("[{}/{}] {}", 
-                                        onedrop.current_preset_index(),
-                                        onedrop.preset_count(),
-                                        preset_name
-                                    ));
-                                }
-                                
-                                if ui.button("►").clicked() {
-                                    if let Some(ref mut onedrop) = self.onedrop {
-                                        let _ = onedrop.next_preset();
-                                    }
-                                }
+                            ui.separator();
+                            
+                            // Fullscreen toggle
+                            if ui.button("🕲 Fullscreen").clicked() {
+                                self.visualizer_fullscreen = !self.visualizer_fullscreen;
+                            }
+                            
+                            // FPS toggle
+                            if ui.button(if self.show_fps { "Hide FPS" } else { "Show FPS" }).clicked() {
+                                self.show_fps = !self.show_fps;
+                            }
+                            
+                            if self.show_fps {
+                                let fps = if !self.frame_times.is_empty() {
+                                    let avg_time: f32 = self.frame_times.iter().sum::<f32>() / self.frame_times.len() as f32;
+                                    if avg_time > 0.0 { 1.0 / avg_time } else { 0.0 }
+                                } else { 0.0 };
+                                ui.label(format!("FPS: {:.1}", fps));
                             }
                         }
                     }
                 });
+                
+                // OneDrop visualization rendering
+                // Note: Direct texture rendering disabled due to wgpu version mismatch
+                // TODO: Update OneDrop to wgpu 23 or implement CPU copy
+                if self.use_onedrop && !self.visualizer_fullscreen {
+                    if let Some(ref onedrop) = self.onedrop {
+                        if onedrop.is_enabled() {
+                            let (width, height) = onedrop.render_size();
+                            ui.add_space(8.0);
+                            ui.label(format!("Milkdrop Visualization: {}x{}", width, height));
+                            ui.label("⚠️ Rendering will be available after OneDrop wgpu update");
+                        }
+                    }
+                }
                 
                 ui.add_space(8.0);
                 ui.separator();
@@ -639,6 +716,21 @@ impl eframe::App for OneAmpApp {
         }
         if clear_error {
             self.error_message = None;
+        }
+        
+        // Fullscreen visualizer mode
+        if self.visualizer_fullscreen && self.use_onedrop {
+            egui::Window::new("Milkdrop Fullscreen")
+                .title_bar(true)
+                .resizable(true)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .show(ctx, |ui| {
+                    ui.label("⚠️ Fullscreen rendering will be available after OneDrop wgpu update");
+                    
+                    if ui.button("✕ Close").clicked() {
+                        self.visualizer_fullscreen = false;
+                    }
+                });
         }
     }
 }
