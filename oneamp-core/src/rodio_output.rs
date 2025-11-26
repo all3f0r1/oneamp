@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use rodio::{OutputStream, OutputStreamHandle, Sink, Source};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -8,48 +9,47 @@ pub struct RodioOutput {
     _stream: OutputStream,
     stream_handle: OutputStreamHandle,
     sink: Arc<Mutex<Sink>>,
+    sample_buffer: Arc<Mutex<VecDeque<f32>>>,
     sample_rate: u32,
     channels: u16,
 }
 
-/// A simple source that reads from a buffer
-struct BufferSource {
-    buffer: Arc<Mutex<Vec<f32>>>,
-    position: usize,
+/// A source that reads from a shared buffer
+struct StreamingSource {
+    buffer: Arc<Mutex<VecDeque<f32>>>,
     sample_rate: u32,
     channels: u16,
+    finished: bool,
 }
 
-impl BufferSource {
-    fn new(buffer: Arc<Mutex<Vec<f32>>>, sample_rate: u32, channels: u16) -> Self {
+impl StreamingSource {
+    fn new(buffer: Arc<Mutex<VecDeque<f32>>>, sample_rate: u32, channels: u16) -> Self {
         Self {
             buffer,
-            position: 0,
             sample_rate,
             channels,
+            finished: false,
         }
     }
 }
 
-impl Iterator for BufferSource {
+impl Iterator for StreamingSource {
     type Item = f32;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Ok(buffer) = self.buffer.lock() {
-            if self.position < buffer.len() {
-                let sample = buffer[self.position];
-                self.position += 1;
-                Some(sample)
-            } else {
-                None
-            }
+        if self.finished {
+            return None;
+        }
+
+        if let Ok(mut buffer) = self.buffer.lock() {
+            buffer.pop_front()
         } else {
             None
         }
     }
 }
 
-impl Source for BufferSource {
+impl Source for StreamingSource {
     fn current_frame_len(&self) -> Option<usize> {
         None
     }
@@ -78,24 +78,28 @@ impl RodioOutput {
         let sink = Sink::try_new(&stream_handle)
             .context("Failed to create audio sink")?;
         
+        let sample_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(sample_rate as usize * 2)));
+        
+        // Create a streaming source that will continuously read from the buffer
+        let source = StreamingSource::new(sample_buffer.clone(), sample_rate, channels);
+        sink.append(source);
+        
         eprintln!("RodioOutput created successfully");
         
         Ok(Self {
             _stream: stream,
             stream_handle,
             sink: Arc::new(Mutex::new(sink)),
+            sample_buffer,
             sample_rate,
             channels,
         })
     }
 
-    /// Write samples to the output
+    /// Write samples to the output buffer
     pub fn write_samples(&self, samples: &[f32]) {
-        if let Ok(sink) = self.sink.lock() {
-            // Convert samples to i16 for rodio
-            let buffer = Arc::new(Mutex::new(samples.to_vec()));
-            let source = BufferSource::new(buffer, self.sample_rate, self.channels);
-            sink.append(source);
+        if let Ok(mut buffer) = self.sample_buffer.lock() {
+            buffer.extend(samples.iter().copied());
         }
     }
 
@@ -117,32 +121,21 @@ impl RodioOutput {
 
     /// Clear the buffer
     pub fn clear(&self) {
-        if let Ok(mut sink) = self.sink.lock() {
-            // Create a new sink to clear the buffer
-            if let Ok(new_sink) = Sink::try_new(&self.stream_handle) {
-                let was_paused = sink.is_paused();
-                *sink = new_sink;
-                if was_paused {
-                    sink.pause();
-                }
-            }
+        if let Ok(mut buffer) = self.sample_buffer.lock() {
+            buffer.clear();
         }
     }
 
-    /// Get the number of samples in the buffer (approximation)
+    /// Get the number of samples in the buffer
     pub fn buffer_len(&self) -> usize {
-        // Rodio doesn't expose buffer length, so we approximate
-        0
+        self.sample_buffer.lock().map(|b| b.len()).unwrap_or(0)
     }
 
     /// Check if the buffer needs more data
     pub fn needs_data(&self) -> bool {
-        if let Ok(sink) = self.sink.lock() {
-            // If sink is empty, we need more data
-            sink.empty()
-        } else {
-            true
-        }
+        // Keep at least 0.5 seconds of audio in the buffer
+        let min_buffer_size = (self.sample_rate as usize * self.channels as usize) / 2;
+        self.buffer_len() < min_buffer_size
     }
 
     /// Get sample rate
