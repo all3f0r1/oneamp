@@ -195,9 +195,9 @@ impl PlatformInfo {
                 // X11: Check desktop environment
                 match self.desktop_environment {
                     Some(DesktopEnvironment::KDE) => true,  // KDE handles drag well
-                    Some(DesktopEnvironment::XFCE) => true, // XFCE is lightweight, usually works
                     Some(DesktopEnvironment::MATE) => true, // MATE is stable
                     Some(DesktopEnvironment::GNOME) => false, // GNOME has issues with StartDrag
+                    Some(DesktopEnvironment::XFCE) => false, // XFCE has issues on Linux Mint
                     Some(DesktopEnvironment::Cinnamon) => false, // Based on GNOME, same issues
                     Some(DesktopEnvironment::Budgie) => false, // Based on GNOME
                     _ => false, // Safe default: disable on unknown DEs
@@ -308,15 +308,15 @@ mod tests {
     }
 
     #[test]
-    fn test_linux_x11_xfce_custom_chrome() {
+    fn test_linux_x11_xfce_no_custom_chrome() {
         let platform = PlatformInfo {
             os: OperatingSystem::Linux,
             desktop_environment: Some(DesktopEnvironment::XFCE),
             display_server: Some(DisplayServer::X11),
         };
         
-        // XFCE + X11 should enable custom chrome
-        assert!(platform.should_use_custom_chrome());
+        // XFCE + X11 should disable custom chrome (issues on Linux Mint)
+        assert!(!platform.should_use_custom_chrome());
     }
 
     #[test]
