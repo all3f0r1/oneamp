@@ -619,15 +619,29 @@ impl eframe::App for OneAmpApp {
                 });
                 
                 // OneDrop visualization rendering
-                // Note: Direct texture rendering disabled due to wgpu version mismatch
-                // TODO: Update OneDrop to wgpu 23 or implement CPU copy
                 if self.use_onedrop && !self.visualizer_fullscreen {
                     if let Some(ref onedrop) = self.onedrop {
                         if onedrop.is_enabled() {
-                            let (width, height) = onedrop.render_size();
                             ui.add_space(8.0);
-                            ui.label(format!("Milkdrop Visualization: {}x{}", width, height));
-                            ui.label("⚠️ Rendering will be available after OneDrop wgpu update");
+                            ui.label("Milkdrop Visualization:");
+                            
+                            // Render placeholder for now (actual texture rendering to be implemented)
+                            let (width, height) = onedrop.render_size();
+                            let size = egui::vec2(width as f32, height as f32);
+                            
+                            // Draw a colored rectangle as placeholder
+                            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+                            if ui.is_rect_visible(rect) {
+                                let painter = ui.painter();
+                                painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 40));
+                                painter.text(
+                                    rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    format!("OneDrop {}x{}", width, height),
+                                    egui::FontId::proportional(16.0),
+                                    egui::Color32::from_rgb(150, 150, 150),
+                                );
+                            }
                         }
                     }
                 }
@@ -720,17 +734,32 @@ impl eframe::App for OneAmpApp {
         
         // Fullscreen visualizer mode
         if self.visualizer_fullscreen && self.use_onedrop {
-            egui::Window::new("Milkdrop Fullscreen")
-                .title_bar(true)
-                .resizable(true)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .show(ctx, |ui| {
-                    ui.label("⚠️ Fullscreen rendering will be available after OneDrop wgpu update");
-                    
-                    if ui.button("✕ Close").clicked() {
-                        self.visualizer_fullscreen = false;
+            egui::CentralPanel::default().show(ctx, |ui| {
+                ui.heading("Milkdrop Fullscreen");
+                
+                if let Some(ref onedrop) = self.onedrop {
+                    if onedrop.is_enabled() {
+                        let available_size = ui.available_size();
+                        let (rect, _) = ui.allocate_exact_size(available_size, egui::Sense::hover());
+                        
+                        if ui.is_rect_visible(rect) {
+                            let painter = ui.painter();
+                            painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(10, 10, 20));
+                            painter.text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "OneDrop Fullscreen Visualization",
+                                egui::FontId::proportional(32.0),
+                                egui::Color32::from_rgb(200, 200, 200),
+                            );
+                        }
                     }
-                });
+                }
+                
+                if ui.button("✕ Close Fullscreen").clicked() {
+                    self.visualizer_fullscreen = false;
+                }
+            });
         }
     }
 }
