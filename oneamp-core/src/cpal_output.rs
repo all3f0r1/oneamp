@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Stream, StreamConfig, SampleFormat};
+use cpal::{Stream, StreamConfig, SupportedStreamConfig};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -15,43 +15,87 @@ pub struct CpalOutput {
 
 impl CpalOutput {
     /// Create a new audio output
-    pub fn new(sample_rate: u32, channels: u16) -> Result<Self> {
+    pub fn new(requested_sample_rate: u32, requested_channels: u16) -> Result<Self> {
+        eprintln!("CpalOutput::new - Requested: sample_rate={}, channels={}", requested_sample_rate, requested_channels);
+        
         let host = cpal::default_host();
+        eprintln!("Using audio host: {:?}", host.id());
+        
         let device = host
             .default_output_device()
             .context("No output device available")?;
         
-        // Get the default config and try to use it as a base
+        eprintln!("Output device: {:?}", device.name());
+        
+        // Get the default config
         let default_config = device
             .default_output_config()
             .context("Failed to get default output config")?;
         
         eprintln!("Default output config: {:?}", default_config);
-        eprintln!("Requested: sample_rate={}, channels={}", sample_rate, channels);
         
-        // Try to use the requested config, but fall back to default if needed
+        // Use the default config as a base, but try to match requested parameters
+        let sample_rate = requested_sample_rate;
+        let channels = requested_channels;
+        
+        // Try to build stream with requested config first
+        match Self::try_build_stream(&device, sample_rate, channels) {
+            Ok((stream, actual_sample_rate, actual_channels)) => {
+                eprintln!("Successfully created stream with sample_rate={}, channels={}", actual_sample_rate, actual_channels);
+                
+                let sample_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(actual_sample_rate as usize)));
+                let is_playing = Arc::new(Mutex::new(true));
+                
+                Ok(Self {
+                    stream,
+                    sample_buffer,
+                    is_playing,
+                    sample_rate: actual_sample_rate,
+                    channels: actual_channels,
+                })
+            }
+            Err(e) => {
+                eprintln!("Failed to create stream with requested config: {}", e);
+                
+                // Fallback: try with default config
+                eprintln!("Trying fallback with default config...");
+                let fallback_sample_rate = default_config.sample_rate().0;
+                let fallback_channels = default_config.channels();
+                
+                match Self::try_build_stream(&device, fallback_sample_rate, fallback_channels) {
+                    Ok((stream, actual_sample_rate, actual_channels)) => {
+                        eprintln!("Successfully created stream with fallback config: sample_rate={}, channels={}", actual_sample_rate, actual_channels);
+                        
+                        let sample_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(actual_sample_rate as usize)));
+                        let is_playing = Arc::new(Mutex::new(true));
+                        
+                        Ok(Self {
+                            stream,
+                            sample_buffer,
+                            is_playing,
+                            sample_rate: actual_sample_rate,
+                            channels: actual_channels,
+                        })
+                    }
+                    Err(e2) => {
+                        Err(anyhow::anyhow!("Failed to create audio output: {} (fallback also failed: {})", e, e2))
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Try to build an output stream with the given parameters
+    fn try_build_stream(
+        device: &cpal::Device,
+        sample_rate: u32,
+        channels: u16,
+    ) -> Result<(Stream, u32, u16)> {
         let config = StreamConfig {
-            channels: channels,
+            channels,
             sample_rate: cpal::SampleRate(sample_rate),
             buffer_size: cpal::BufferSize::Default,
         };
-        
-        // Check if the device supports f32 format
-        let supported_configs = device
-            .supported_output_configs()
-            .context("Failed to get supported output configs")?;
-        
-        let mut found_f32 = false;
-        for supported_config in supported_configs {
-            if supported_config.sample_format() == SampleFormat::F32 {
-                found_f32 = true;
-                eprintln!("Found F32 support: {:?}", supported_config);
-            }
-        }
-        
-        if !found_f32 {
-            eprintln!("Warning: F32 format may not be supported, trying anyway...");
-        }
         
         let sample_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(sample_rate as usize)));
         let sample_buffer_clone = sample_buffer.clone();
@@ -84,18 +128,11 @@ impl CpalOutput {
         // Start the stream
         stream.play().context("Failed to start stream")?;
         
-        eprintln!("CpalOutput created successfully");
-        
-        Ok(Self {
-            stream,
-            sample_buffer,
-            is_playing,
-            sample_rate,
-            channels,
-        })
+        Ok((stream, sample_rate, channels))
     }
     
     /// Write samples to the output buffer
+    /// If the sample rate or channels don't match, this will need resampling
     pub fn write_samples(&self, samples: &[f32]) {
         if let Ok(mut buffer) = self.sample_buffer.lock() {
             buffer.extend(samples.iter().copied());
@@ -133,7 +170,9 @@ impl CpalOutput {
     
     /// Check if the buffer is nearly empty (needs more data)
     pub fn needs_data(&self) -> bool {
-        self.buffer_len() < (self.sample_rate as usize * self.channels as usize / 4)
+        // Keep at least 0.25 seconds of audio in the buffer
+        let min_buffer_size = (self.sample_rate as usize * self.channels as usize) / 4;
+        self.buffer_len() < min_buffer_size
     }
     
     /// Get sample rate
