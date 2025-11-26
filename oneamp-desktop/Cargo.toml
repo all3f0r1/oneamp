@@ -45,7 +45,7 @@ lofty = "0.21"
 image = "0.25"
 
 # OneDrop (Milkdrop) visualizer integration
-onedrop-engine = { path = "../../onedrop/onedrop-engine" }
-onedrop-renderer = { path = "../../onedrop/onedrop-renderer" }
+onedrop-engine = { git = "https://github.com/all3f0r1/OneDrop.git", branch = "main" }
+onedrop-renderer = { git = "https://github.com/all3f0r1/OneDrop.git", branch = "main" }
 wgpu = "23.0"
 pollster = "0.3"
