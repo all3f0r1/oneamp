@@ -625,22 +625,27 @@ impl eframe::App for OneAmpApp {
                             ui.add_space(8.0);
                             ui.label("Milkdrop Visualization:");
                             
-                            // Render placeholder for now (actual texture rendering to be implemented)
+                            // Get texture from OneDrop
+                            let texture = onedrop.render_texture();
                             let (width, height) = onedrop.render_size();
-                            let size = egui::vec2(width as f32, height as f32);
                             
-                            // Draw a colored rectangle as placeholder
-                            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
-                            if ui.is_rect_visible(rect) {
-                                let painter = ui.painter();
-                                painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(20, 20, 40));
-                                painter.text(
-                                    rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    format!("OneDrop {}x{}", width, height),
-                                    egui::FontId::proportional(16.0),
-                                    egui::Color32::from_rgb(150, 150, 150),
-                                );
+                            // Register texture with egui if not already done
+                            if self.onedrop_texture_id.is_none() {
+                                if let Some(render_state) = frame.wgpu_render_state() {
+                                    let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                                    let texture_id = render_state.renderer.write().register_native_texture(
+                                        &render_state.device,
+                                        &texture_view,
+                                        wgpu::FilterMode::Linear,
+                                    );
+                                    self.onedrop_texture_id = Some(texture_id);
+                                }
+                            }
+                            
+                            // Display the texture
+                            if let Some(texture_id) = self.onedrop_texture_id {
+                                let size = egui::vec2(width as f32, height as f32);
+                                ui.image(egui::load::SizedTexture::new(texture_id, size));
                             }
                         }
                     }
@@ -735,30 +740,41 @@ impl eframe::App for OneAmpApp {
         // Fullscreen visualizer mode
         if self.visualizer_fullscreen && self.use_onedrop {
             egui::CentralPanel::default().show(ctx, |ui| {
-                ui.heading("Milkdrop Fullscreen");
-                
                 if let Some(ref onedrop) = self.onedrop {
                     if onedrop.is_enabled() {
-                        let available_size = ui.available_size();
-                        let (rect, _) = ui.allocate_exact_size(available_size, egui::Sense::hover());
+                        // Get texture from OneDrop
+                        let texture = onedrop.render_texture();
                         
-                        if ui.is_rect_visible(rect) {
-                            let painter = ui.painter();
-                            painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(10, 10, 20));
-                            painter.text(
-                                rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                "OneDrop Fullscreen Visualization",
-                                egui::FontId::proportional(32.0),
-                                egui::Color32::from_rgb(200, 200, 200),
-                            );
+                        // Register texture if not already done
+                        if self.onedrop_texture_id.is_none() {
+                            if let Some(render_state) = frame.wgpu_render_state() {
+                                let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                                let texture_id = render_state.renderer.write().register_native_texture(
+                                    &render_state.device,
+                                    &texture_view,
+                                    wgpu::FilterMode::Linear,
+                                );
+                                self.onedrop_texture_id = Some(texture_id);
+                            }
+                        }
+                        
+                        // Display fullscreen texture
+                        if let Some(texture_id) = self.onedrop_texture_id {
+                            let available_size = ui.available_size();
+                            ui.image(egui::load::SizedTexture::new(texture_id, available_size));
                         }
                     }
                 }
                 
-                if ui.button("✕ Close Fullscreen").clicked() {
-                    self.visualizer_fullscreen = false;
-                }
+                // Close button overlay
+                ui.allocate_ui_at_rect(egui::Rect::from_min_size(
+                    egui::pos2(10.0, 10.0),
+                    egui::vec2(150.0, 30.0)
+                ), |ui| {
+                    if ui.button("✕ Close Fullscreen").clicked() {
+                        self.visualizer_fullscreen = false;
+                    }
+                });
             });
         }
     }

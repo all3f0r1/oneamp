@@ -108,6 +108,11 @@ impl OneDropVisualizer {
         self.enabled
     }
     
+    /// Get the render texture for display
+    pub fn render_texture(&self) -> &wgpu::Texture {
+        self.engine.render_texture()
+    }
+    
     /// Navigate to next preset
     pub fn next_preset(&mut self) -> Result<()> {
         if self.presets.is_empty() {
