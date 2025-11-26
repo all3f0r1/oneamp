@@ -3072,7 +3072,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "oneamp-cli"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -3083,7 +3083,7 @@ dependencies = [
 
 [[package]]
 name = "oneamp-core"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -3093,7 +3093,7 @@ dependencies = [
 
 [[package]]
 name = "oneamp-desktop"
-version = "0.11.0"
+version = "0.12.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -3117,6 +3117,7 @@ dependencies = [
 [[package]]
 name = "onedrop-engine"
 version = "0.2.0"
+source = "git+https://github.com/all3f0r1/OneDrop.git?branch=main#a46beadb5712bc35003bd86b1ca99210e8eb027d"
 dependencies = [
  "anyhow",
  "log",
@@ -3131,10 +3132,12 @@ dependencies = [
 [[package]]
 name = "onedrop-eval"
 version = "0.2.0"
+source = "git+https://github.com/all3f0r1/OneDrop.git?branch=main#a46beadb5712bc35003bd86b1ca99210e8eb027d"
 dependencies = [
  "anyhow",
  "evalexpr",
  "log",
+ "regex",
  "serde",
  "thiserror 2.0.17",
 ]
@@ -3142,6 +3145,7 @@ dependencies = [
 [[package]]
 name = "onedrop-parser"
 version = "0.2.0"
+source = "git+https://github.com/all3f0r1/OneDrop.git?branch=main#a46beadb5712bc35003bd86b1ca99210e8eb027d"
 dependencies = [
  "anyhow",
  "log",
@@ -3153,6 +3157,7 @@ dependencies = [
 [[package]]
 name = "onedrop-renderer"
 version = "0.2.0"
+source = "git+https://github.com/all3f0r1/OneDrop.git?branch=main#a46beadb5712bc35003bd86b1ca99210e8eb027d"
 dependencies = [
  "anyhow",
  "bytemuck",

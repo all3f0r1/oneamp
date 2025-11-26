@@ -40,11 +40,19 @@ use onedrop_visualizer::OneDropVisualizer;
 fn main() -> eframe::Result {
     let theme = Theme::default();
     
+    // Platform-specific window chrome configuration
+    // Custom chrome on Windows/macOS, system decorations on Linux
+    #[cfg(target_os = "linux")]
+    const USE_CUSTOM_CHROME: bool = false;
+    
+    #[cfg(not(target_os = "linux"))]
+    const USE_CUSTOM_CHROME: bool = true;
+    
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([theme.layout.window_min_width, theme.layout.window_min_height])
             .with_min_inner_size([theme.layout.window_min_width, theme.layout.window_min_height])
-            .with_decorations(true) // Use system window decorations (custom chrome disabled due to Linux issues)
+            .with_decorations(!USE_CUSTOM_CHROME) // Custom chrome = no decorations
             .with_icon(
                 eframe::icon_data::from_png_bytes(&include_bytes!("../../icon_256.png")[..])
                     .unwrap_or_default(),
@@ -100,6 +108,9 @@ struct OneAmpApp {
     
     // OneDrop visualizer
     onedrop: Option<OneDropVisualizer>,
+    
+    // Platform-specific window chrome
+    use_custom_chrome: bool,
     use_onedrop: bool,
     onedrop_texture_id: Option<egui::TextureId>,
     visualizer_fullscreen: bool,
@@ -154,6 +165,12 @@ impl OneAmpApp {
             album_art: AlbumArtDisplay::new(),
             window_chrome: WindowChrome::new(),
             onedrop: None,  // Will be initialized asynchronously
+            use_custom_chrome: {
+                #[cfg(target_os = "linux")]
+                { false }
+                #[cfg(not(target_os = "linux"))]
+                { true }
+            },
             use_onedrop: false,
             onedrop_texture_id: None,
             visualizer_fullscreen: false,
@@ -420,24 +437,26 @@ impl eframe::App for OneAmpApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.theme.apply_to_egui(ctx);
         
-        // Custom window chrome disabled due to Linux system freeze issues
-        // TODO: Re-enable with proper platform detection or fix drag handling
-        // let window_action = self.window_chrome.render(ctx, &self.theme, "OneAmp");
-        // match window_action {
-        //     WindowAction::Close => {
-        //         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        //     }
-        //     WindowAction::Minimize => {
-        //         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-        //     }
-        //     WindowAction::ToggleMaximize => {
-        //         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
-        //     }
-        //     WindowAction::StartDrag => {
-        //         ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-        //     }
-        //     WindowAction::None => {}
-        // }
+        // Custom window chrome (platform-specific)
+        // Enabled on Windows/macOS, disabled on Linux (system freeze issues)
+        if self.use_custom_chrome {
+            let window_action = self.window_chrome.render(ctx, &self.theme, "OneAmp");
+            match window_action {
+                WindowAction::Close => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                WindowAction::Minimize => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                }
+                WindowAction::ToggleMaximize => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                }
+                WindowAction::StartDrag => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                WindowAction::None => {}
+            }
+        }
         
         self.handle_keyboard_shortcuts(ctx);
         self.handle_dropped_files(ctx);
