@@ -7,12 +7,12 @@ use std::time::Duration;
 
 use crate::{AudioCommand, AudioEvent, TrackInfo, Equalizer, AudioCaptureBuffer};
 use crate::symphonia_player::SymphoniaPlayer;
-use crate::cpal_output::CpalOutput;
+use crate::rodio_output::RodioOutput;
 
 /// Audio playback state
 struct PlaybackState {
     player: SymphoniaPlayer,
-    output: CpalOutput,
+    output: RodioOutput,
     is_paused: bool,
 }
 
@@ -218,7 +218,7 @@ fn load_and_play(
         .context("Failed to load audio file")?;
     
     // Create output
-    let output = CpalOutput::new(player.sample_rate(), player.channels())
+    let output = RodioOutput::new(player.sample_rate(), player.channels())
         .context("Failed to create audio output")?;
     
     Ok(PlaybackState {
