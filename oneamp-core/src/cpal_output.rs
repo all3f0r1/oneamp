@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Stream, StreamConfig};
+use cpal::{Stream, StreamConfig, SampleFormat};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -9,6 +9,8 @@ pub struct CpalOutput {
     stream: Stream,
     sample_buffer: Arc<Mutex<VecDeque<f32>>>,
     is_playing: Arc<Mutex<bool>>,
+    sample_rate: u32,
+    channels: u16,
 }
 
 impl CpalOutput {
@@ -19,11 +21,37 @@ impl CpalOutput {
             .default_output_device()
             .context("No output device available")?;
         
+        // Get the default config and try to use it as a base
+        let default_config = device
+            .default_output_config()
+            .context("Failed to get default output config")?;
+        
+        eprintln!("Default output config: {:?}", default_config);
+        eprintln!("Requested: sample_rate={}, channels={}", sample_rate, channels);
+        
+        // Try to use the requested config, but fall back to default if needed
         let config = StreamConfig {
-            channels,
+            channels: channels,
             sample_rate: cpal::SampleRate(sample_rate),
             buffer_size: cpal::BufferSize::Default,
         };
+        
+        // Check if the device supports f32 format
+        let supported_configs = device
+            .supported_output_configs()
+            .context("Failed to get supported output configs")?;
+        
+        let mut found_f32 = false;
+        for supported_config in supported_configs {
+            if supported_config.sample_format() == SampleFormat::F32 {
+                found_f32 = true;
+                eprintln!("Found F32 support: {:?}", supported_config);
+            }
+        }
+        
+        if !found_f32 {
+            eprintln!("Warning: F32 format may not be supported, trying anyway...");
+        }
         
         let sample_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(sample_rate as usize)));
         let sample_buffer_clone = sample_buffer.clone();
@@ -51,15 +79,19 @@ impl CpalOutput {
                 eprintln!("Audio stream error: {}", err);
             },
             None,
-        )?;
+        ).context("Failed to build output stream")?;
         
         // Start the stream
-        stream.play()?;
+        stream.play().context("Failed to start stream")?;
+        
+        eprintln!("CpalOutput created successfully");
         
         Ok(Self {
             stream,
             sample_buffer,
             is_playing,
+            sample_rate,
+            channels,
         })
     }
     
@@ -101,18 +133,16 @@ impl CpalOutput {
     
     /// Check if the buffer is nearly empty (needs more data)
     pub fn needs_data(&self) -> bool {
-        self.buffer_len() < (self.sample_rate() * self.channels() as usize / 4)
+        self.buffer_len() < (self.sample_rate as usize * self.channels as usize / 4)
     }
     
-    /// Get sample rate (from stream config)
-    fn sample_rate(&self) -> usize {
-        // We'll store this when we need it, for now return a default
-        44100
+    /// Get sample rate
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
     }
     
-    /// Get channels (from stream config)
-    fn channels(&self) -> usize {
-        // We'll store this when we need it, for now return a default
-        2
+    /// Get channels
+    pub fn channels(&self) -> u16 {
+        self.channels
     }
 }
