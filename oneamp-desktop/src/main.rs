@@ -44,7 +44,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([theme.layout.window_min_width, theme.layout.window_min_height])
             .with_min_inner_size([theme.layout.window_min_width, theme.layout.window_min_height])
-            .with_decorations(false) // Custom window chrome
+            .with_decorations(true) // Use system window decorations (custom chrome disabled due to Linux issues)
             .with_icon(
                 eframe::icon_data::from_png_bytes(&include_bytes!("../../icon_256.png")[..])
                     .unwrap_or_default(),
@@ -420,23 +420,24 @@ impl eframe::App for OneAmpApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.theme.apply_to_egui(ctx);
         
-        // Custom window chrome
-        let window_action = self.window_chrome.render(ctx, &self.theme, "OneAmp");
-        match window_action {
-            WindowAction::Close => {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
-            WindowAction::Minimize => {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-            }
-            WindowAction::ToggleMaximize => {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
-            }
-            WindowAction::StartDrag => {
-                ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-            }
-            WindowAction::None => {}
-        }
+        // Custom window chrome disabled due to Linux system freeze issues
+        // TODO: Re-enable with proper platform detection or fix drag handling
+        // let window_action = self.window_chrome.render(ctx, &self.theme, "OneAmp");
+        // match window_action {
+        //     WindowAction::Close => {
+        //         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        //     }
+        //     WindowAction::Minimize => {
+        //         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        //     }
+        //     WindowAction::ToggleMaximize => {
+        //         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        //     }
+        //     WindowAction::StartDrag => {
+        //         ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        //     }
+        //     WindowAction::None => {}
+        // }
         
         self.handle_keyboard_shortcuts(ctx);
         self.handle_dropped_files(ctx);
