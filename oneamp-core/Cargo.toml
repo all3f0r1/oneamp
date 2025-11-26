@@ -22,3 +22,6 @@ anyhow.workspace = true
 
 # Channels for thread communication
 crossbeam-channel.workspace = true
+
+# Audio output
+cpal.workspace = true

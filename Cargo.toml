@@ -25,6 +25,9 @@ anyhow = "1.0"
 # Channels
 crossbeam-channel = "0.5"
 
+# Audio output
+cpal = "0.15"
+
 [profile.release]
 opt-level = 3          # Maximum optimization
 lto = "thin"           # Link-Time Optimization (thin for reasonable compile time)

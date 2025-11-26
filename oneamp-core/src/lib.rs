@@ -14,6 +14,9 @@ use symphonia::core::probe::Hint;
 pub mod equalizer;
 pub mod eq_source;
 pub mod audio_capture;
+pub mod symphonia_player;
+pub mod cpal_output;
+pub mod audio_thread_symphonia;
 
 pub use equalizer::Equalizer;
 pub use eq_source::EqualizerSource;
@@ -173,7 +176,7 @@ impl AudioEngine {
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
         
         let thread_handle = thread::spawn(move || {
-            if let Err(e) = audio_thread_main(command_rx, event_tx) {
+            if let Err(e) = audio_thread_symphonia::audio_thread_main_symphonia(command_rx, event_tx) {
                 eprintln!("Audio thread error: {}", e);
             }
         });
@@ -293,7 +296,33 @@ fn audio_thread_main(
                     let _ = event_tx.send(AudioEvent::Stopped);
                 }
                 AudioCommand::Seek(_pos) => {
-                    // TODO: Implement seeking (requires more complex handling)
+                    if let Some(ref track) = current_track {
+                        // Stop current playback
+                        sink = None;
+                        
+                        // Reload and seek by skipping to position
+                        // Note: This is a limitation of rodio - it restarts playback
+                        match load_and_play(&track.path, &stream_handle, equalizer.clone(), capture_buffer.clone()) {
+                            Ok(new_sink) => {
+                                // Skip to the desired position
+                                new_sink.skip_one();
+                                // Note: rodio doesn't support precise seeking
+                                // We can only restart playback
+                                // A proper implementation would require a custom decoder
+                                
+                                if is_paused {
+                                    new_sink.pause();
+                                }
+                                
+                                sink = Some(new_sink);
+                                // Send Playing event to update UI
+                                let _ = event_tx.send(AudioEvent::Playing);
+                            }
+                            Err(e) => {
+                                let _ = event_tx.send(AudioEvent::Error(format!("Failed to seek: {}", e)));
+                            }
+                        }
+                    }
                 }
                 AudioCommand::Next => {
                     // Stop current playback and request next track from GUI
