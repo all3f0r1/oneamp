@@ -37,22 +37,25 @@ use window_chrome::{WindowChrome, WindowAction};
 mod onedrop_visualizer;
 use onedrop_visualizer::OneDropVisualizer;
 
+mod platform_detection;
+use platform_detection::PlatformInfo;
+
 fn main() -> eframe::Result {
     let theme = Theme::default();
     
-    // Platform-specific window chrome configuration
-    // Custom chrome on Windows/macOS, system decorations on Linux
-    #[cfg(target_os = "linux")]
-    const USE_CUSTOM_CHROME: bool = false;
+    // Smart platform detection for window chrome
+    // Detects OS, desktop environment, and display server
+    let platform_info = PlatformInfo::detect();
+    let use_custom_chrome = platform_info.should_use_custom_chrome();
     
-    #[cfg(not(target_os = "linux"))]
-    const USE_CUSTOM_CHROME: bool = true;
+    println!("Platform: {}", platform_info.description());
+    println!("Custom window chrome: {}", if use_custom_chrome { "enabled" } else { "disabled" });
     
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([theme.layout.window_min_width, theme.layout.window_min_height])
             .with_min_inner_size([theme.layout.window_min_width, theme.layout.window_min_height])
-            .with_decorations(!USE_CUSTOM_CHROME) // Custom chrome = no decorations
+            .with_decorations(!use_custom_chrome) // Custom chrome = no decorations
             .with_icon(
                 eframe::icon_data::from_png_bytes(&include_bytes!("../../icon_256.png")[..])
                     .unwrap_or_default(),
@@ -63,8 +66,8 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "OneAmp",
         options,
-        Box::new(|cc| {
-            Ok(Box::new(OneAmpApp::new(cc)))
+        Box::new(move |cc| {
+            Ok(Box::new(OneAmpApp::new(cc, use_custom_chrome)))
         }),
     )
 }
@@ -128,7 +131,7 @@ enum PlaybackState {
 }
 
 impl OneAmpApp {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, use_custom_chrome: bool) -> Self {
         let theme = Theme::default();
         theme.apply_to_egui(&cc.egui_ctx);
         
@@ -165,12 +168,7 @@ impl OneAmpApp {
             album_art: AlbumArtDisplay::new(),
             window_chrome: WindowChrome::new(),
             onedrop: None,  // Will be initialized asynchronously
-            use_custom_chrome: {
-                #[cfg(target_os = "linux")]
-                { false }
-                #[cfg(not(target_os = "linux"))]
-                { true }
-            },
+            use_custom_chrome,
             use_onedrop: false,
             onedrop_texture_id: None,
             visualizer_fullscreen: false,
