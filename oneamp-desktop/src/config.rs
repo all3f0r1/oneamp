@@ -142,6 +142,7 @@ mod tests {
                 gains: vec![1.0; 10],
             },
             first_run: false,
+            active_skin: "Winamp5 Classified".to_string(),
         };
         
         let json = serde_json::to_string(&config).expect("Should serialize");
@@ -149,6 +150,25 @@ mod tests {
         
         assert_eq!(config.equalizer.enabled, deserialized.equalizer.enabled);
         assert_eq!(config.first_run, deserialized.first_run);
+        assert_eq!(config.active_skin, deserialized.active_skin);
+    }
+
+    #[test]
+    fn test_active_skin_default() {
+        let config = AppConfig::default();
+        assert_eq!(config.active_skin, "OneAmp Dark");
+    }
+
+    #[test]
+    fn test_active_skin_persistence() {
+        let mut config = AppConfig::default();
+        config.active_skin = "Winamp5 Classified".to_string();
+        
+        let json = serde_json::to_string(&config).expect("Should serialize");
+        let deserialized: AppConfig = serde_json::from_str(&json).expect("Should deserialize");
+        
+        assert_eq!(config.active_skin, deserialized.active_skin);
+        assert_eq!(deserialized.active_skin, "Winamp5 Classified");
     }
 
     #[test]

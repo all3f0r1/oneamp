@@ -513,6 +513,22 @@ impl eframe::App for OneAmpApp {
             self.last_scroll_update = std::time::Instant::now();
         }
         
+        // Show skin selector dialog
+        if self.show_skin_selector {
+            let mut config = AppConfig::load().0;
+            let skin_changed = skins::ui::skin_selector_dialog(
+                ctx,
+                &mut self.skin_manager,
+                &mut self.show_skin_selector,
+            );
+            
+            if skin_changed {
+                // Save the new skin selection
+                config.active_skin = self.skin_manager.get_active_skin().metadata.name.clone();
+                let _ = config.save();
+            }
+        }
+        
         ctx.request_repaint();
         
         // Main vertical layout: Player -> Equalizer -> Playlist
@@ -594,6 +610,13 @@ impl eframe::App for OneAmpApp {
                             onedrop.set_enabled(false);
                         }
                     }
+                    
+                    // Skin selector button
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("🎨 Skins").clicked() {
+                            self.show_skin_selector = !self.show_skin_selector;
+                        }
+                    });
                     
                     let has_presets = self.onedrop.as_ref().map_or(false, |od| od.has_presets());
                     
