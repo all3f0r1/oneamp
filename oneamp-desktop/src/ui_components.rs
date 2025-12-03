@@ -178,13 +178,28 @@ pub fn render_progress_bar(
 
         let rect = response.rect;
 
-        // Background
-        painter.rect_filled(rect, 4.0, Theme::color32(&theme.colors.progress_bg));
+        // Background with hover effect
+        let bg_color = if response.hovered() {
+            Theme::color32(&theme.colors.progress_bg).linear_multiply(1.2)
+        } else {
+            Theme::color32(&theme.colors.progress_bg)
+        };
+        painter.rect_filled(rect, 4.0, bg_color);
 
-        // Fill
+        // Fill with enhanced color on hover
+        let fill_color = if response.hovered() {
+            Theme::color32(&theme.colors.progress_fill).linear_multiply(1.15)
+        } else {
+            Theme::color32(&theme.colors.progress_fill)
+        };
         let fill_width = rect.width() * progress;
         let fill_rect = egui::Rect::from_min_size(rect.min, egui::vec2(fill_width, rect.height()));
-        painter.rect_filled(fill_rect, 4.0, Theme::color32(&theme.colors.progress_fill));
+        painter.rect_filled(fill_rect, 4.0, fill_color);
+
+        // Add a subtle highlight on hover
+        if response.hovered() {
+            painter.rect_stroke(rect, 4.0, egui::Stroke::new(1.0, Theme::color32(&theme.colors.display_accent).linear_multiply(0.5)));
+        }
 
         // Handle click/drag to seek
         if response.clicked() || response.dragged() {

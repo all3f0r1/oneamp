@@ -5,6 +5,28 @@ All notable changes to OneAmp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.5] - 2025-12-03
+
+### Added
+- Phase 3: Hover Effects and Transitions
+- Scale animation on control buttons (10% larger on hover, 5% smaller on click)
+- Enhanced glow effect on hover (5 layers instead of 4)
+- Hover effects on progress bar (color enhancement and highlight)
+- Visual feedback for all interactive elements
+
+### Changed
+- Control buttons now scale smoothly on hover
+- Progress bar brightens on hover (1.2x background, 1.15x fill)
+- Glow intensity increased on hover
+- Progress bar shows accent color border on hover
+- Better visual feedback for user interactions
+
+### Fixed
+- Lack of visual feedback on button hover
+- Progress bar not responding to hover state
+- Insufficient visual distinction between interactive states
+- Missing scale animation feedback
+
 ## [0.15.4] - 2025-12-03
 
 ### Added

@@ -123,7 +123,17 @@ pub fn control_button(
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         let center = rect.center();
-        let radius = size / 2.0 - 2.0;
+        let mut radius = size / 2.0 - 2.0;
+
+        // Scale animation on hover
+        let scale = if response.hovered() {
+            1.1 // 10% larger on hover
+        } else if response.is_pointer_button_down_on() {
+            0.95 // 5% smaller on click
+        } else {
+            1.0
+        };
+        radius *= scale;
 
         // Shadow (unless pressed)
         if !response.clicked() {
@@ -156,12 +166,13 @@ pub fn control_button(
             button_color.linear_multiply(0.7),
         );
 
-        // Glow if active or hovered
+        // Glow if active or hovered (enhanced on hover)
         if active || response.hovered() {
             let glow_color = Theme::color32(&theme.colors.display_accent);
-            for i in 0..4 {
-                let glow_radius = radius + 2.0 + i as f32 * 2.0;
-                let alpha = (80 - i * 20).max(10) as u8;
+            let glow_intensity = if response.hovered() { 5 } else { 4 };
+            for i in 0..glow_intensity {
+                let glow_radius = radius + 2.0 + i as f32 * 2.5;
+                let alpha = (100 - i * 20).max(10) as u8;
                 painter.circle_stroke(
                     center,
                     glow_radius,
