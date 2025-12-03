@@ -197,12 +197,14 @@ impl TrackInfo {
 
             sample_rate = codec_params.sample_rate;
             channels = codec_params.channels.map(|c| c.count() as u8);
-            bitrate = codec_params.bit_rate;
 
-            // Extract codec name
-            if let Some(codec_profile) = &codec_params.codec {
-                codec = Some(format!("{:?}", codec_profile).to_uppercase());
-            }
+            // Extract codec name from CodecType
+            let codec_type = &codec_params.codec;
+            codec = Some(format!("{:?}", codec_type).to_uppercase());
+
+            // Note: bitrate is not directly available in CodecParameters
+            // It would need to be calculated from the file size and duration
+            // For now, we leave it as None
 
             if let (Some(n_frames), Some(sr)) = (codec_params.n_frames, codec_params.sample_rate) {
                 duration_secs = Some(n_frames as f32 / sr as f32);

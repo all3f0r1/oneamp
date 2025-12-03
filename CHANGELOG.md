@@ -5,6 +5,24 @@ All notable changes to OneAmp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2025-12-03
+
+### Added
+- Phase 1: Skin application integration
+- New `Theme::from_skin()` function to create themes from skin configurations
+- Automatic skin-to-theme conversion at runtime
+- Improved skin color application to all UI elements
+
+### Changed
+- Skin colors now properly applied to the entire UI
+- Theme system now integrates with skin system
+- Better color consistency across the application
+
+### Fixed
+- Skin colors not being applied to buttons and widgets
+- Theme overriding skin colors
+- Improved codec extraction from symphonia
+
 ## [0.15.0] - 2025-12-03
 
 ### Added

@@ -205,6 +205,67 @@ impl Theme {
     pub fn color32(rgb: &[u8; 3]) -> egui::Color32 {
         egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2])
     }
+
+    /// Create a theme from a skin configuration
+    /// This integrates skin colors into the theme structure
+    pub fn from_skin(skin: &crate::skins::Skin) -> Self {
+        use crate::skins::parser;
+
+        // Parse hex colors from skin
+        let parse_color = |hex: &str| -> [u8; 3] {
+            parser::hex_to_color32(hex)
+                .map(|c| [c.r(), c.g(), c.b()])
+                .unwrap_or([128, 128, 128]) // Fallback to gray if parsing fails
+        };
+
+        Theme {
+            name: skin.metadata.name.clone(),
+            colors: ColorScheme {
+                // Main window colors
+                window_bg: parse_color(&skin.colors.background),
+                panel_bg: parse_color(&skin.colors.background),
+                border: parse_color(&skin.colors.window_stroke),
+
+                // Display colors
+                display_bg: parse_color(&skin.colors.background),
+                display_text: parse_color(&skin.colors.text),
+                display_accent: parse_color(&skin.colors.accent),
+
+                // Button colors
+                button_normal: parse_color(&skin.colors.widget_bg),
+                button_hovered: parse_color(&skin.colors.hovered_widget_bg),
+                button_active: parse_color(&skin.colors.active_widget_bg),
+
+                // Progress bar
+                progress_bg: parse_color(&skin.colors.background),
+                progress_fill: parse_color(&skin.colors.accent),
+
+                // Playlist
+                playlist_bg: parse_color(&skin.colors.background),
+                playlist_text: parse_color(&skin.colors.text),
+                playlist_selected: parse_color(&skin.colors.accent),
+                playlist_playing: parse_color(&skin.colors.accent),
+
+                // Equalizer
+                eq_slider: parse_color(&skin.colors.widget_bg),
+                eq_fill: parse_color(&skin.colors.accent),
+            },
+            fonts: FontConfig {
+                timer_size: skin.metrics.timer_text_size,
+                track_info_size: skin.metrics.body_text_size,
+                playlist_size: skin.metrics.body_text_size,
+                button_size: skin.metrics.body_text_size,
+            },
+            layout: LayoutConfig {
+                window_min_width: 600.0,
+                window_min_height: 500.0,
+                player_height: 150.0,
+                equalizer_height: 180.0,
+                spacing: 8.0,
+                padding: skin.metrics.window_padding,
+            },
+        }
+    }
 }
 
 #[cfg(test)]

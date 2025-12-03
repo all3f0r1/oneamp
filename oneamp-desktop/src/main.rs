@@ -477,6 +477,12 @@ impl eframe::App for OneAmpApp {
         // Apply the active skin at the beginning of each frame
         self.skin_manager.apply_skin(ctx);
 
+        // Create theme from the active skin and apply it
+        let active_skin = self.skin_manager.get_active_skin();
+        let skin_theme = Theme::from_skin(active_skin);
+        skin_theme.apply_to_egui(ctx);
+
+        // Also apply the default theme for any missing properties
         self.theme.apply_to_egui(ctx);
 
         // Custom window chrome (platform-specific)
