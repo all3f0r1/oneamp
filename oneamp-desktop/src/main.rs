@@ -153,6 +153,15 @@ impl OneAmpApp {
         let theme = Theme::default();
         theme.apply_to_egui(&cc.egui_ctx);
 
+        // Suppress ALSA warnings by redirecting stderr during audio engine initialization
+        #[cfg(feature = "audio")]
+        {
+            // Set ALSA environment variables to reduce warnings
+            std::env::set_var("ALSA_CARD", "default");
+            // Suppress specific ALSA messages
+            std::env::set_var("ALSA_CONFIG_DIR", "/dev/null");
+        }
+
         let audio_engine = match AudioEngine::new() {
             Ok(engine) => Some(engine),
             Err(e) => {
