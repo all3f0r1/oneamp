@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender};
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;

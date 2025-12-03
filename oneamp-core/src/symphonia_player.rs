@@ -76,7 +76,7 @@ impl SymphoniaPlayer {
         // Create decoder
         let decoder_opts = DecoderOptions::default();
         let decoder = symphonia::default::get_codecs()
-            .make(&codec_params, decoder_opts)
+            .make(&codec_params, &decoder_opts)
             .context("Failed to create decoder")?;
 
         // Update equalizer sample rate

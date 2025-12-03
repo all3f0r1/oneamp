@@ -5,6 +5,17 @@ All notable changes to OneAmp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.3] - 2025-12-03
+
+### Fixed
+- **Compilation Error**: Fixed type mismatch in symphonia_player.rs (decoder_opts reference)
+- **CI/CD Pipeline**: Added pkg-config to system dependencies for proper ALSA detection
+- **Unused Imports**: Removed unused PathBuf import in audio_thread_symphonia.rs
+- **Type Hints**: Changed PathBuf to Path for better type consistency
+
+### Changed
+- **Build Dependencies**: Added pkg-config to GitHub Actions workflow for ALSA support
+
 ## [0.14.2] - 2025-12-03
 
 ### Fixed
