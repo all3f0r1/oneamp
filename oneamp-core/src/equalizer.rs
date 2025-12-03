@@ -10,13 +10,13 @@ pub struct BiquadFilter {
     b2: f32,
     a1: f32,
     a2: f32,
-    
+
     // State variables for left and right channels
     x1_l: f32,
     x2_l: f32,
     y1_l: f32,
     y2_l: f32,
-    
+
     x1_r: f32,
     x2_r: f32,
     y1_r: f32,
@@ -42,9 +42,9 @@ impl BiquadFilter {
             y2_r: 0.0,
         }
     }
-    
+
     /// Configure as a peaking EQ filter
-    /// 
+    ///
     /// # Arguments
     /// * `sample_rate` - Sample rate in Hz
     /// * `frequency` - Center frequency in Hz
@@ -56,14 +56,14 @@ impl BiquadFilter {
         let sin_omega = omega.sin();
         let cos_omega = omega.cos();
         let alpha = sin_omega / (2.0 * q);
-        
+
         let b0 = 1.0 + alpha * a;
         let b1 = -2.0 * cos_omega;
         let b2 = 1.0 - alpha * a;
         let a0 = 1.0 + alpha / a;
         let a1 = -2.0 * cos_omega;
         let a2 = 1.0 - alpha / a;
-        
+
         // Normalize coefficients
         self.b0 = b0 / a0;
         self.b1 = b1 / a0;
@@ -71,28 +71,30 @@ impl BiquadFilter {
         self.a1 = a1 / a0;
         self.a2 = a2 / a0;
     }
-    
+
     /// Process a stereo sample pair
     pub fn process_stereo(&mut self, left: f32, right: f32) -> (f32, f32) {
         // Process left channel
         let left_out = self.b0 * left + self.b1 * self.x1_l + self.b2 * self.x2_l
-                       - self.a1 * self.y1_l - self.a2 * self.y2_l;
+            - self.a1 * self.y1_l
+            - self.a2 * self.y2_l;
         self.x2_l = self.x1_l;
         self.x1_l = left;
         self.y2_l = self.y1_l;
         self.y1_l = left_out;
-        
+
         // Process right channel
         let right_out = self.b0 * right + self.b1 * self.x1_r + self.b2 * self.x2_r
-                        - self.a1 * self.y1_r - self.a2 * self.y2_r;
+            - self.a1 * self.y1_r
+            - self.a2 * self.y2_r;
         self.x2_r = self.x1_r;
         self.x1_r = right;
         self.y2_r = self.y1_r;
         self.y1_r = right_out;
-        
+
         (left_out, right_out)
     }
-    
+
     /// Reset filter state (useful when changing tracks)
     pub fn reset(&mut self) {
         self.x1_l = 0.0;
@@ -143,7 +145,7 @@ impl Equalizer {
             8000.0,  // Brilliance
             16000.0, // Air
         ];
-        
+
         let mut eq = Self {
             bands: vec![BiquadFilter::new(); 10],
             frequencies: frequencies.clone(),
@@ -151,13 +153,13 @@ impl Equalizer {
             sample_rate,
             enabled: false,
         };
-        
+
         // Initialize all filters with 0 dB gain
         eq.update_filters();
-        
+
         eq
     }
-    
+
     /// Enable or disable the equalizer
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
@@ -168,14 +170,14 @@ impl Equalizer {
             }
         }
     }
-    
+
     /// Check if equalizer is enabled
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
-    
+
     /// Set gain for a specific band (0-9)
-    /// 
+    ///
     /// # Arguments
     /// * `band_index` - Band index (0-9)
     /// * `gain_db` - Gain in decibels (-12 to +12)
@@ -185,17 +187,17 @@ impl Equalizer {
             self.update_filter(band_index);
         }
     }
-    
+
     /// Get gain for a specific band
     pub fn get_band_gain(&self, band_index: usize) -> f32 {
         self.gains.get(band_index).copied().unwrap_or(0.0)
     }
-    
+
     /// Get all band gains
     pub fn get_all_gains(&self) -> &[f32] {
         &self.gains
     }
-    
+
     /// Set all band gains at once
     pub fn set_all_gains(&mut self, gains: &[f32]) {
         for (i, &gain) in gains.iter().enumerate().take(self.gains.len()) {
@@ -203,7 +205,7 @@ impl Equalizer {
         }
         self.update_filters();
     }
-    
+
     /// Reset all bands to 0 dB (flat response)
     pub fn reset_all_bands(&mut self) {
         for gain in &mut self.gains {
@@ -211,12 +213,12 @@ impl Equalizer {
         }
         self.update_filters();
     }
-    
+
     /// Get band frequencies
     pub fn get_frequencies(&self) -> &[f32] {
         &self.frequencies
     }
-    
+
     /// Update a single filter's coefficients
     fn update_filter(&mut self, band_index: usize) {
         if band_index < self.bands.len() {
@@ -229,33 +231,33 @@ impl Equalizer {
             );
         }
     }
-    
+
     /// Update all filter coefficients
     fn update_filters(&mut self) {
         for i in 0..self.bands.len() {
             self.update_filter(i);
         }
     }
-    
+
     /// Process a stereo sample through all bands
     pub fn process_stereo(&mut self, left: f32, right: f32) -> (f32, f32) {
         if !self.enabled {
             return (left, right);
         }
-        
+
         let mut l = left;
         let mut r = right;
-        
+
         // Process through all bands in series
         for band in &mut self.bands {
             let (l_out, r_out) = band.process_stereo(l, r);
             l = l_out;
             r = r_out;
         }
-        
+
         (l, r)
     }
-    
+
     /// Update sample rate (call when track changes)
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         if (self.sample_rate - sample_rate).abs() > 0.1 {
@@ -274,7 +276,7 @@ impl Default for Equalizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_biquad_passthrough() {
         let mut filter = BiquadFilter::new();
@@ -282,7 +284,7 @@ mod tests {
         assert!((l - 1.0).abs() < 0.001);
         assert!((r + 1.0).abs() < 0.001);
     }
-    
+
     #[test]
     fn test_equalizer_disabled() {
         let mut eq = Equalizer::new(44100.0);
@@ -292,7 +294,7 @@ mod tests {
         assert!((l - 1.0).abs() < 0.001);
         assert!((r - 1.0).abs() < 0.001);
     }
-    
+
     #[test]
     fn test_equalizer_gain_clamping() {
         let mut eq = Equalizer::new(44100.0);

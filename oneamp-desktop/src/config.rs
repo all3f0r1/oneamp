@@ -48,19 +48,17 @@ impl Default for AppConfig {
 impl AppConfig {
     /// Get the config file path
     fn config_path() -> Result<PathBuf> {
-        let config_dir = dirs::config_dir()
-            .context("Failed to get config directory")?;
+        let config_dir = dirs::config_dir().context("Failed to get config directory")?;
         let oneamp_dir = config_dir.join("oneamp");
-        
+
         // Create directory if it doesn't exist
         if !oneamp_dir.exists() {
-            fs::create_dir_all(&oneamp_dir)
-                .context("Failed to create config directory")?;
+            fs::create_dir_all(&oneamp_dir).context("Failed to create config directory")?;
         }
-        
+
         Ok(oneamp_dir.join("config.json"))
     }
-    
+
     /// Load configuration from file
     /// Returns (config, is_first_run)
     pub fn load() -> (Self, bool) {
@@ -68,38 +66,33 @@ impl AppConfig {
             Ok(path) => {
                 if path.exists() {
                     match fs::read_to_string(&path) {
-                        Ok(content) => {
-                            match serde_json::from_str::<AppConfig>(&content) {
-                                Ok(mut config) => {
-                                    let is_first = config.first_run;
-                                    config.first_run = false;
-                                    return (config, is_first);
-                                }
-                                Err(e) => eprintln!("Failed to parse config: {}", e),
+                        Ok(content) => match serde_json::from_str::<AppConfig>(&content) {
+                            Ok(mut config) => {
+                                let is_first = config.first_run;
+                                config.first_run = false;
+                                return (config, is_first);
                             }
-                        }
+                            Err(e) => eprintln!("Failed to parse config: {}", e),
+                        },
                         Err(e) => eprintln!("Failed to read config file: {}", e),
                     }
                 }
             }
             Err(e) => eprintln!("Failed to get config path: {}", e),
         }
-        
+
         // Return default config if loading failed (first run)
         (Self::default(), true)
     }
-    
+
     /// Save configuration to file
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path()?;
-        let content = serde_json::to_string_pretty(self)
-            .context("Failed to serialize config")?;
-        fs::write(&path, content)
-            .context("Failed to write config file")?;
+        let content = serde_json::to_string_pretty(self).context("Failed to serialize config")?;
+        fs::write(&path, content).context("Failed to write config file")?;
         Ok(())
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -110,13 +103,19 @@ mod tests {
         let config = EqualizerConfig::default();
         assert!(!config.enabled, "Equalizer should be disabled by default");
         assert_eq!(config.gains.len(), 10, "Should have 10 bands");
-        assert!(config.gains.iter().all(|&g| g == 0.0), "All gains should be 0.0");
+        assert!(
+            config.gains.iter().all(|&g| g == 0.0),
+            "All gains should be 0.0"
+        );
     }
 
     #[test]
     fn test_app_config_default() {
         let config = AppConfig::default();
-        assert!(!config.equalizer.enabled, "Equalizer should be disabled by default");
+        assert!(
+            !config.equalizer.enabled,
+            "Equalizer should be disabled by default"
+        );
         assert!(config.first_run, "Should be first run by default");
     }
 
@@ -126,10 +125,11 @@ mod tests {
             enabled: true,
             gains: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
         };
-        
+
         let json = serde_json::to_string(&config).expect("Should serialize");
-        let deserialized: EqualizerConfig = serde_json::from_str(&json).expect("Should deserialize");
-        
+        let deserialized: EqualizerConfig =
+            serde_json::from_str(&json).expect("Should deserialize");
+
         assert_eq!(config.enabled, deserialized.enabled);
         assert_eq!(config.gains, deserialized.gains);
     }
@@ -144,10 +144,10 @@ mod tests {
             first_run: false,
             active_skin: "Winamp5 Classified".to_string(),
         };
-        
+
         let json = serde_json::to_string(&config).expect("Should serialize");
         let deserialized: AppConfig = serde_json::from_str(&json).expect("Should deserialize");
-        
+
         assert_eq!(config.equalizer.enabled, deserialized.equalizer.enabled);
         assert_eq!(config.first_run, deserialized.first_run);
         assert_eq!(config.active_skin, deserialized.active_skin);
@@ -163,10 +163,10 @@ mod tests {
     fn test_active_skin_persistence() {
         let mut config = AppConfig::default();
         config.active_skin = "Winamp5 Classified".to_string();
-        
+
         let json = serde_json::to_string(&config).expect("Should serialize");
         let deserialized: AppConfig = serde_json::from_str(&json).expect("Should deserialize");
-        
+
         assert_eq!(config.active_skin, deserialized.active_skin);
         assert_eq!(deserialized.active_skin, "Winamp5 Classified");
     }
@@ -178,14 +178,14 @@ mod tests {
         config.equalizer.enabled = true;
         config.equalizer.gains = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
         config.first_run = false;
-        
+
         // Save it
         let save_result = config.save();
         // May fail if no config directory is available, that's ok for testing
         if save_result.is_ok() {
             // Load it back
             let (loaded_config, is_first_run) = AppConfig::load();
-            
+
             // Verify values
             assert_eq!(config.equalizer.enabled, loaded_config.equalizer.enabled);
             assert_eq!(config.equalizer.gains, loaded_config.equalizer.gains);
@@ -201,8 +201,14 @@ mod tests {
         // Should either succeed or fail gracefully
         match path_result {
             Ok(path) => {
-                assert!(path.ends_with("config.json"), "Path should end with config.json");
-                assert!(path.to_string_lossy().contains("oneamp"), "Path should contain oneamp");
+                assert!(
+                    path.ends_with("config.json"),
+                    "Path should end with config.json"
+                );
+                assert!(
+                    path.to_string_lossy().contains("oneamp"),
+                    "Path should contain oneamp"
+                );
             }
             Err(_) => {
                 // It's ok if it fails in test environment
@@ -214,10 +220,10 @@ mod tests {
     fn test_first_run_detection() {
         // Test that first run is detected correctly
         let (config, is_first_run) = AppConfig::load();
-        
+
         // Should return a valid config
         assert_eq!(config.equalizer.gains.len(), 10);
-        
+
         // is_first_run can be true or false depending on whether config exists
         // Just verify it's a boolean
         assert!(is_first_run || !is_first_run);

@@ -5,11 +5,11 @@ use super::SkinManager;
 use egui::{RichText, Ui};
 
 /// Renders a skin selector menu in the UI.
-/// 
+///
 /// # Arguments
 /// * `ui` - The egui UI context
 /// * `skin_manager` - The skin manager instance
-/// 
+///
 /// # Returns
 /// `true` if a skin was selected, `false` otherwise
 pub fn skin_selector_menu(ui: &mut Ui, skin_manager: &mut SkinManager) -> bool {
@@ -44,11 +44,11 @@ pub fn skin_selector_menu(ui: &mut Ui, skin_manager: &mut SkinManager) -> bool {
 }
 
 /// Renders a compact skin selector button.
-/// 
+///
 /// # Arguments
 /// * `ui` - The egui UI context
 /// * `skin_manager` - The skin manager instance
-/// 
+///
 /// # Returns
 /// `true` if the skin selector was clicked, `false` otherwise
 pub fn skin_selector_button(ui: &mut Ui, skin_manager: &SkinManager) -> bool {
@@ -59,7 +59,7 @@ pub fn skin_selector_button(ui: &mut Ui, skin_manager: &SkinManager) -> bool {
 }
 
 /// Renders a detailed skin info panel.
-/// 
+///
 /// # Arguments
 /// * `ui` - The egui UI context
 /// * `skin_manager` - The skin manager instance
@@ -80,16 +80,15 @@ pub fn skin_info_panel(ui: &mut Ui, skin_manager: &SkinManager) {
             ui.label("Colors:");
             ui.horizontal(|ui| {
                 // Show a color swatch for the background
-                let bg_color = parse_hex_color(&skin.colors.background)
-                    .unwrap_or(egui::Color32::GRAY);
+                let bg_color =
+                    parse_hex_color(&skin.colors.background).unwrap_or(egui::Color32::GRAY);
                 ui.colored_label(bg_color, "■ Background");
 
-                let text_color = parse_hex_color(&skin.colors.text)
-                    .unwrap_or(egui::Color32::WHITE);
+                let text_color = parse_hex_color(&skin.colors.text).unwrap_or(egui::Color32::WHITE);
                 ui.colored_label(text_color, "■ Text");
 
-                let accent_color = parse_hex_color(&skin.colors.accent)
-                    .unwrap_or(egui::Color32::LIGHT_BLUE);
+                let accent_color =
+                    parse_hex_color(&skin.colors.accent).unwrap_or(egui::Color32::LIGHT_BLUE);
                 ui.colored_label(accent_color, "■ Accent");
             });
 
@@ -99,12 +98,12 @@ pub fn skin_info_panel(ui: &mut Ui, skin_manager: &SkinManager) {
 }
 
 /// Renders a skin selector dialog.
-/// 
+///
 /// # Arguments
 /// * `ui` - The egui UI context
 /// * `skin_manager` - The skin manager instance
 /// * `show_dialog` - Whether to show the dialog
-/// 
+///
 /// # Returns
 /// `true` if a skin was selected, `false` otherwise
 pub fn skin_selector_dialog(
@@ -123,7 +122,8 @@ pub fn skin_selector_dialog(
                 ui.label("Available Skins:");
                 ui.separator();
 
-                let skins_to_display: Vec<_> = skin_manager.available_skins.iter().enumerate().collect();
+                let skins_to_display: Vec<_> =
+                    skin_manager.available_skins.iter().enumerate().collect();
                 let active_index = skin_manager.active_skin_index;
 
                 for (index, skin) in skins_to_display {
@@ -159,9 +159,10 @@ pub fn skin_selector_dialog(
                                 }
 
                                 if is_active {
-                                    ui.label(RichText::new("✓ Active").color(
-                                        egui::Color32::from_rgb(0, 212, 255),
-                                    ));
+                                    ui.label(
+                                        RichText::new("✓ Active")
+                                            .color(egui::Color32::from_rgb(0, 212, 255)),
+                                    );
                                 }
                             });
                         });

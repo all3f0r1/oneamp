@@ -7,6 +7,7 @@ use std::time::Duration;
 /// Audio output using rodio (which wraps cpal with better ALSA handling)
 pub struct RodioOutput {
     _stream: OutputStream,
+    #[allow(dead_code)]
     stream_handle: OutputStreamHandle,
     sink: Arc<Mutex<Sink>>,
     sample_buffer: Arc<Mutex<VecDeque<f32>>>,
@@ -70,22 +71,26 @@ impl Source for StreamingSource {
 impl RodioOutput {
     /// Create a new audio output using rodio
     pub fn new(sample_rate: u32, channels: u16) -> Result<Self> {
-        eprintln!("RodioOutput::new - sample_rate={}, channels={}", sample_rate, channels);
-        
-        let (stream, stream_handle) = OutputStream::try_default()
-            .context("Failed to get default audio output device")?;
-        
-        let sink = Sink::try_new(&stream_handle)
-            .context("Failed to create audio sink")?;
-        
-        let sample_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(sample_rate as usize * 2)));
-        
+        eprintln!(
+            "RodioOutput::new - sample_rate={}, channels={}",
+            sample_rate, channels
+        );
+
+        let (stream, stream_handle) =
+            OutputStream::try_default().context("Failed to get default audio output device")?;
+
+        let sink = Sink::try_new(&stream_handle).context("Failed to create audio sink")?;
+
+        let sample_buffer = Arc::new(Mutex::new(VecDeque::with_capacity(
+            sample_rate as usize * 2,
+        )));
+
         // Create a streaming source that will continuously read from the buffer
         let source = StreamingSource::new(sample_buffer.clone(), sample_rate, channels);
         sink.append(source);
-        
+
         eprintln!("RodioOutput created successfully");
-        
+
         Ok(Self {
             _stream: stream,
             stream_handle,

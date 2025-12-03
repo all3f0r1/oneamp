@@ -1,8 +1,8 @@
 // Plugin Error Handling
 // Defines error types and result types for the plugin system.
 
-use std::fmt;
 use std::error::Error;
+use std::fmt;
 
 /// Result type for plugin operations.
 pub type PluginResult<T> = Result<T, PluginError>;
@@ -119,7 +119,9 @@ mod tests {
     fn test_plugin_result_ok() {
         let result: PluginResult<i32> = Ok(42);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), 42);
+        if let Ok(value) = result {
+            assert_eq!(value, 42);
+        }
     }
 
     #[test]

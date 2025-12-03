@@ -1,5 +1,5 @@
-use eframe::egui::{self, Color32, Painter, Pos2, Response, Sense, Shape, Stroke, Ui, Vec2};
 use crate::theme::Theme;
+use eframe::egui::{self, Color32, Painter, Pos2, Response, Sense, Shape, Stroke, Ui, Vec2};
 
 /// Button icons for media controls
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -19,9 +19,9 @@ impl ButtonIcon {
                 // Triangle pointing right
                 let offset = size * 0.1; // Slight offset to center visually
                 let points = vec![
-                    center + Vec2::new(-size/3.0 + offset, -size/2.0),
-                    center + Vec2::new(-size/3.0 + offset, size/2.0),
-                    center + Vec2::new(size/2.0 + offset, 0.0),
+                    center + Vec2::new(-size / 3.0 + offset, -size / 2.0),
+                    center + Vec2::new(-size / 3.0 + offset, size / 2.0),
+                    center + Vec2::new(size / 2.0 + offset, 0.0),
                 ];
                 painter.add(Shape::convex_polygon(points, color, Stroke::NONE));
             }
@@ -30,7 +30,7 @@ impl ButtonIcon {
                 let bar_width = size / 5.0;
                 let bar_height = size * 0.8;
                 let spacing = size / 6.0;
-                
+
                 // Left bar
                 painter.rect_filled(
                     egui::Rect::from_center_size(
@@ -40,7 +40,7 @@ impl ButtonIcon {
                     2.0,
                     color,
                 );
-                
+
                 // Right bar
                 painter.rect_filled(
                     egui::Rect::from_center_size(
@@ -55,10 +55,7 @@ impl ButtonIcon {
                 // Square
                 let square_size = size * 0.6;
                 painter.rect_filled(
-                    egui::Rect::from_center_size(
-                        center,
-                        Vec2::splat(square_size),
-                    ),
+                    egui::Rect::from_center_size(center, Vec2::splat(square_size)),
                     2.0,
                     color,
                 );
@@ -67,22 +64,22 @@ impl ButtonIcon {
                 // Bar + triangle pointing left
                 let bar_width = size / 8.0;
                 let bar_height = size * 0.7;
-                
+
                 // Bar on left
                 painter.rect_filled(
                     egui::Rect::from_center_size(
-                        center + Vec2::new(-size/3.0, 0.0),
+                        center + Vec2::new(-size / 3.0, 0.0),
                         Vec2::new(bar_width, bar_height),
                     ),
                     1.0,
                     color,
                 );
-                
+
                 // Triangle
                 let points = vec![
-                    center + Vec2::new(size/3.0, -size/2.5),
-                    center + Vec2::new(size/3.0, size/2.5),
-                    center + Vec2::new(-size/6.0, 0.0),
+                    center + Vec2::new(size / 3.0, -size / 2.5),
+                    center + Vec2::new(size / 3.0, size / 2.5),
+                    center + Vec2::new(-size / 6.0, 0.0),
                 ];
                 painter.add(Shape::convex_polygon(points, color, Stroke::NONE));
             }
@@ -90,19 +87,19 @@ impl ButtonIcon {
                 // Triangle + bar pointing right
                 let bar_width = size / 8.0;
                 let bar_height = size * 0.7;
-                
+
                 // Triangle
                 let points = vec![
-                    center + Vec2::new(-size/3.0, -size/2.5),
-                    center + Vec2::new(-size/3.0, size/2.5),
-                    center + Vec2::new(size/6.0, 0.0),
+                    center + Vec2::new(-size / 3.0, -size / 2.5),
+                    center + Vec2::new(-size / 3.0, size / 2.5),
+                    center + Vec2::new(size / 6.0, 0.0),
                 ];
                 painter.add(Shape::convex_polygon(points, color, Stroke::NONE));
-                
+
                 // Bar on right
                 painter.rect_filled(
                     egui::Rect::from_center_size(
-                        center + Vec2::new(size/3.0, 0.0),
+                        center + Vec2::new(size / 3.0, 0.0),
                         Vec2::new(bar_width, bar_height),
                     ),
                     1.0,
@@ -121,16 +118,13 @@ pub fn control_button(
     active: bool,
     size: f32,
 ) -> Response {
-    let (rect, response) = ui.allocate_exact_size(
-        Vec2::splat(size),
-        Sense::click(),
-    );
-    
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+
     if ui.is_rect_visible(rect) {
         let painter = ui.painter();
         let center = rect.center();
         let radius = size / 2.0 - 2.0;
-        
+
         // Shadow (unless pressed)
         if !response.clicked() {
             for i in 0..3 {
@@ -143,7 +137,7 @@ pub fn control_button(
                 );
             }
         }
-        
+
         // Button body color
         let button_color = if response.is_pointer_button_down_on() {
             Theme::color32(&theme.colors.button_active)
@@ -152,7 +146,7 @@ pub fn control_button(
         } else {
             Theme::color32(&theme.colors.button_normal)
         };
-        
+
         // Circular gradient (top lighter, bottom darker)
         draw_circular_gradient(
             painter,
@@ -161,7 +155,7 @@ pub fn control_button(
             button_color.linear_multiply(1.3),
             button_color.linear_multiply(0.7),
         );
-        
+
         // Glow if active or hovered
         if active || response.hovered() {
             let glow_color = Theme::color32(&theme.colors.display_accent);
@@ -183,26 +177,28 @@ pub fn control_button(
                 );
             }
         }
-        
+
         // Highlight on top
         painter.circle_filled(
             center + Vec2::new(0.0, -radius * 0.3),
             radius * 0.4,
             Color32::from_white_alpha(40),
         );
-        
+
         // Icon
         let icon_color = if active {
             Theme::color32(&theme.colors.display_accent)
         } else {
             Theme::color32(&theme.colors.display_text)
         };
-        
+
         icon.draw(painter, center, size * 0.35, icon_color);
-        
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{:?}", icon)));
+
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{:?}", icon))
+        });
     }
-    
+
     response
 }
 
@@ -219,26 +215,26 @@ fn draw_circular_gradient(
     for i in 0..slices {
         let t = i as f32 / slices as f32;
         let next_t = (i + 1) as f32 / slices as f32;
-        
+
         // Interpolate color
         let color = Color32::from_rgb(
             (top_color.r() as f32 * (1.0 - t) + bottom_color.r() as f32 * t) as u8,
             (top_color.g() as f32 * (1.0 - t) + bottom_color.g() as f32 * t) as u8,
             (top_color.b() as f32 * (1.0 - t) + bottom_color.b() as f32 * t) as u8,
         );
-        
+
         // Calculate y positions
         let y1 = center.y - radius + t * radius * 2.0;
         let y2 = center.y - radius + next_t * radius * 2.0;
-        
+
         // Calculate width at this height (circle equation)
         let dy1 = (y1 - center.y).abs();
         let dy2 = (y2 - center.y).abs();
-        
+
         if dy1 < radius && dy2 < radius {
             let width1 = (radius * radius - dy1 * dy1).sqrt() * 2.0;
             let width2 = (radius * radius - dy2 * dy2).sqrt() * 2.0;
-            
+
             // Draw trapezoid
             let points = vec![
                 Pos2::new(center.x - width1 / 2.0, y1),
@@ -246,11 +242,11 @@ fn draw_circular_gradient(
                 Pos2::new(center.x + width2 / 2.0, y2),
                 Pos2::new(center.x - width2 / 2.0, y2),
             ];
-            
+
             painter.add(Shape::convex_polygon(points, color, Stroke::NONE));
         }
     }
-    
+
     // Outer circle stroke for clean edge
     painter.circle_stroke(
         center,
@@ -267,24 +263,24 @@ pub fn control_button_row(
     is_paused: bool,
 ) -> ControlAction {
     let mut action = ControlAction::None;
-    
+
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        
+
         // Previous
         if control_button(ui, theme, ButtonIcon::Previous, false, 40.0).clicked() {
             action = ControlAction::Previous;
         }
-        
+
         ui.add_space(4.0);
-        
+
         // Play/Pause
         let play_pause_icon = if is_playing && !is_paused {
             ButtonIcon::Pause
         } else {
             ButtonIcon::Play
         };
-        
+
         if control_button(ui, theme, play_pause_icon, is_playing, 48.0).clicked() {
             action = if is_playing && !is_paused {
                 ControlAction::Pause
@@ -292,24 +288,24 @@ pub fn control_button_row(
                 ControlAction::Play
             };
         }
-        
+
         ui.add_space(4.0);
-        
+
         // Stop
         if control_button(ui, theme, ButtonIcon::Stop, false, 40.0).clicked() {
             action = ControlAction::Stop;
         }
-        
+
         ui.add_space(4.0);
-        
+
         // Next
         if control_button(ui, theme, ButtonIcon::Next, false, 40.0).clicked() {
             action = ControlAction::Next;
         }
-        
+
         ui.add_space(8.0);
     });
-    
+
     action
 }
 
@@ -327,7 +323,7 @@ pub enum ControlAction {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_button_icon_types() {
         let icons = vec![
@@ -337,10 +333,10 @@ mod tests {
             ButtonIcon::Previous,
             ButtonIcon::Next,
         ];
-        
+
         assert_eq!(icons.len(), 5);
     }
-    
+
     #[test]
     fn test_control_action() {
         let action = ControlAction::Play;

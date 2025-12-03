@@ -1,8 +1,7 @@
 /// Platform detection module for smart window chrome configuration
-/// 
+///
 /// This module detects the platform, desktop environment, and display server
 /// to determine whether custom window chrome should be enabled.
-
 use std::env;
 
 /// Platform information
@@ -87,7 +86,7 @@ impl PlatformInfo {
         // Check XDG_CURRENT_DESKTOP first (most reliable)
         if let Ok(desktop) = env::var("XDG_CURRENT_DESKTOP") {
             let desktop_lower = desktop.to_lowercase();
-            
+
             if desktop_lower.contains("gnome") {
                 return DesktopEnvironment::GNOME;
             } else if desktop_lower.contains("kde") || desktop_lower.contains("plasma") {
@@ -112,7 +111,7 @@ impl PlatformInfo {
         // Fallback to DESKTOP_SESSION
         if let Ok(session) = env::var("DESKTOP_SESSION") {
             let session_lower = session.to_lowercase();
-            
+
             if session_lower.contains("gnome") {
                 return DesktopEnvironment::GNOME;
             } else if session_lower.contains("kde") || session_lower.contains("plasma") {
@@ -174,7 +173,7 @@ impl PlatformInfo {
     }
 
     /// Determine if custom window chrome should be enabled
-    /// 
+    ///
     /// Rules:
     /// - Windows: Always enabled
     /// - macOS: Always enabled
@@ -194,13 +193,13 @@ impl PlatformInfo {
 
                 // X11: Check desktop environment
                 match self.desktop_environment {
-                    Some(DesktopEnvironment::KDE) => true,  // KDE handles drag well
+                    Some(DesktopEnvironment::KDE) => true, // KDE handles drag well
                     Some(DesktopEnvironment::MATE) => true, // MATE is stable
                     Some(DesktopEnvironment::GNOME) => false, // GNOME has issues with StartDrag
                     Some(DesktopEnvironment::XFCE) => false, // XFCE has issues on Linux Mint
                     Some(DesktopEnvironment::Cinnamon) => false, // Based on GNOME, same issues
                     Some(DesktopEnvironment::Budgie) => false, // Based on GNOME
-                    _ => false, // Safe default: disable on unknown DEs
+                    _ => false,                            // Safe default: disable on unknown DEs
                 }
             }
             OperatingSystem::Other => false,
@@ -211,12 +210,15 @@ impl PlatformInfo {
     pub fn description(&self) -> String {
         let mut parts = Vec::new();
 
-        parts.push(match self.os {
-            OperatingSystem::Linux => "Linux",
-            OperatingSystem::Windows => "Windows",
-            OperatingSystem::MacOS => "macOS",
-            OperatingSystem::Other => "Other OS",
-        }.to_string());
+        parts.push(
+            match self.os {
+                OperatingSystem::Linux => "Linux",
+                OperatingSystem::Windows => "Windows",
+                OperatingSystem::MacOS => "macOS",
+                OperatingSystem::Other => "Other OS",
+            }
+            .to_string(),
+        );
 
         if let Some(de) = self.desktop_environment {
             parts.push(format!("{:?}", de));
@@ -237,14 +239,14 @@ mod tests {
     #[test]
     fn test_platform_detection() {
         let platform = PlatformInfo::detect();
-        
+
         // Should detect current OS
         #[cfg(target_os = "linux")]
         assert_eq!(platform.os, OperatingSystem::Linux);
-        
+
         #[cfg(target_os = "windows")]
         assert_eq!(platform.os, OperatingSystem::Windows);
-        
+
         #[cfg(target_os = "macos")]
         assert_eq!(platform.os, OperatingSystem::MacOS);
     }
@@ -256,7 +258,7 @@ mod tests {
             desktop_environment: None,
             display_server: None,
         };
-        
+
         assert!(platform.should_use_custom_chrome());
     }
 
@@ -267,7 +269,7 @@ mod tests {
             desktop_environment: None,
             display_server: None,
         };
-        
+
         assert!(platform.should_use_custom_chrome());
     }
 
@@ -278,7 +280,7 @@ mod tests {
             desktop_environment: Some(DesktopEnvironment::GNOME),
             display_server: Some(DisplayServer::Wayland),
         };
-        
+
         // Wayland should enable custom chrome even on GNOME
         assert!(platform.should_use_custom_chrome());
     }
@@ -290,7 +292,7 @@ mod tests {
             desktop_environment: Some(DesktopEnvironment::GNOME),
             display_server: Some(DisplayServer::X11),
         };
-        
+
         // GNOME + X11 should disable custom chrome
         assert!(!platform.should_use_custom_chrome());
     }
@@ -302,7 +304,7 @@ mod tests {
             desktop_environment: Some(DesktopEnvironment::KDE),
             display_server: Some(DisplayServer::X11),
         };
-        
+
         // KDE + X11 should enable custom chrome
         assert!(platform.should_use_custom_chrome());
     }
@@ -314,7 +316,7 @@ mod tests {
             desktop_environment: Some(DesktopEnvironment::XFCE),
             display_server: Some(DisplayServer::X11),
         };
-        
+
         // XFCE + X11 should disable custom chrome (issues on Linux Mint)
         assert!(!platform.should_use_custom_chrome());
     }
@@ -326,7 +328,7 @@ mod tests {
             desktop_environment: Some(DesktopEnvironment::Unknown),
             display_server: Some(DisplayServer::X11),
         };
-        
+
         // Unknown DE + X11 should disable custom chrome (safe default)
         assert!(!platform.should_use_custom_chrome());
     }
@@ -338,7 +340,7 @@ mod tests {
             desktop_environment: Some(DesktopEnvironment::GNOME),
             display_server: Some(DisplayServer::Wayland),
         };
-        
+
         let desc = platform.description();
         assert!(desc.contains("Linux"));
         assert!(desc.contains("GNOME"));

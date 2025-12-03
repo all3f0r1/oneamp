@@ -1,10 +1,10 @@
 // Skin Manager
 // Responsible for discovering, loading, and applying skins.
 
-use super::{Skin, parser};
+use super::{parser, Skin};
 use anyhow::Result;
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 
 /// Manages the discovery, loading, and application of skins.
 pub struct SkinManager {
@@ -17,10 +17,10 @@ pub struct SkinManager {
 
 impl SkinManager {
     /// Creates a new SkinManager and discovers all available skins.
-    /// 
+    ///
     /// # Arguments
     /// * `skins_dir` - Path to the directory containing skin subdirectories
-    /// 
+    ///
     /// # Returns
     /// A new `SkinManager` with discovered skins. If no skins are found or the
     /// directory doesn't exist, the manager will contain only the default built-in skin.
@@ -77,10 +77,10 @@ impl SkinManager {
     }
 
     /// Sets the active skin by index.
-    /// 
+    ///
     /// # Arguments
     /// * `index` - Index of the skin in the `available_skins` list
-    /// 
+    ///
     /// # Returns
     /// `true` if the skin was successfully changed, `false` if the index is out of bounds.
     pub fn set_active_skin(&mut self, index: usize) -> bool {
@@ -93,10 +93,10 @@ impl SkinManager {
     }
 
     /// Finds the index of a skin by name.
-    /// 
+    ///
     /// # Arguments
     /// * `name` - Name of the skin to find
-    /// 
+    ///
     /// # Returns
     /// The index of the skin if found, or `None` if not found.
     pub fn find_skin_by_name(&self, name: &str) -> Option<usize> {
@@ -106,7 +106,7 @@ impl SkinManager {
     }
 
     /// Applies the active skin to the egui context.
-    /// 
+    ///
     /// This method constructs an `egui::Visuals` and `egui::Style` from the active skin
     /// and applies them to the provided context.
     pub fn apply_skin(&self, ctx: &egui::Context) {
@@ -159,7 +159,7 @@ impl SkinManager {
     }
 
     /// Reloads the active skin from disk.
-    /// 
+    ///
     /// This is useful for development when skin files are being edited.
     pub fn reload_active_skin(&mut self) -> Result<()> {
         let skin_path = self.get_active_skin().path.clone();

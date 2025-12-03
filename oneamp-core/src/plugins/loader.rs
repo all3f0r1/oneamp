@@ -1,12 +1,12 @@
 // Plugin Loader
 // Handles dynamic loading of plugins from shared libraries.
 
-use std::path::Path;
-use super::traits::InputPlugin;
 use super::error::{PluginError, PluginResult};
+use super::traits::InputPlugin;
+use std::path::Path;
 
 /// Plugin loader for dynamically loading plugins from shared libraries.
-/// 
+///
 /// This is a placeholder for future implementation using libloading.
 /// For now, only built-in plugins are supported.
 pub struct PluginLoader;
@@ -40,22 +40,18 @@ impl PluginLoader {
     pub fn validate_plugin_file(path: &Path) -> PluginResult<()> {
         // Check that file exists
         if !path.exists() {
-            return Err(PluginError::FileNotFound(
-                format!("{:?}", path),
-            ));
+            return Err(PluginError::FileNotFound(format!("{:?}", path)));
         }
 
         // Check that file has a valid extension
-        let extension = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("");
+        let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
 
         match extension {
             "so" | "dll" | "dylib" => Ok(()),
-            _ => Err(PluginError::Other(
-                format!("Invalid plugin file extension: {}", extension),
-            )),
+            _ => Err(PluginError::Other(format!(
+                "Invalid plugin file extension: {}",
+                extension
+            ))),
         }
     }
 

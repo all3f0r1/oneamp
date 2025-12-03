@@ -26,11 +26,11 @@ impl AudioCaptureBuffer {
     pub fn update(&mut self, samples: &[f32], sample_rate: u32, channels: u16) {
         self.sample_rate = sample_rate;
         self.channels = channels;
-        
+
         // Copy samples to buffer
         let copy_len = samples.len().min(self.samples.len());
         self.samples[..copy_len].copy_from_slice(&samples[..copy_len]);
-        
+
         // Fill remaining with zeros if needed
         if copy_len < self.samples.len() {
             self.samples[copy_len..].fill(0.0);
@@ -84,11 +84,11 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         let sample = self.inner.next()?;
-        
+
         // Convert to f32 and store in temp buffer
         let f32_sample = sample as f32 / 32768.0;
         self.temp_buffer.push(f32_sample);
-        
+
         // When we have enough samples, update the capture buffer
         if self.temp_buffer.len() >= 2048 {
             if let Ok(mut buffer) = self.capture_buffer.lock() {
@@ -100,7 +100,7 @@ where
             }
             self.temp_buffer.clear();
         }
-        
+
         Some(sample)
     }
 }

@@ -11,18 +11,18 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-pub mod equalizer;
-pub mod eq_source;
 pub mod audio_capture;
-pub mod symphonia_player;
-pub mod cpal_output;
-pub mod rodio_output;
 pub mod audio_thread_symphonia;
+pub mod cpal_output;
+pub mod eq_source;
+pub mod equalizer;
 pub mod plugins;
+pub mod rodio_output;
+pub mod symphonia_player;
 
-pub use equalizer::Equalizer;
-pub use eq_source::EqualizerSource;
 pub use audio_capture::{AudioCaptureBuffer, AudioCaptureSource};
+pub use eq_source::EqualizerSource;
+pub use equalizer::Equalizer;
 
 /// Commands that can be sent to the audio thread
 #[derive(Debug, Clone)]
@@ -95,29 +95,28 @@ pub struct TrackInfo {
 impl TrackInfo {
     /// Extract metadata from a file
     pub fn from_file(path: &PathBuf) -> Result<Self> {
-        let file = File::open(path)
-            .context("Failed to open audio file for metadata reading")?;
-        
+        let file = File::open(path).context("Failed to open audio file for metadata reading")?;
+
         let mss = MediaSourceStream::new(Box::new(file), Default::default());
-        
+
         let mut hint = Hint::new();
         if let Some(ext) = path.extension() {
             hint.with_extension(ext.to_str().unwrap_or(""));
         }
-        
+
         let format_opts = FormatOptions::default();
         let metadata_opts = MetadataOptions::default();
-        
+
         let probed = symphonia::default::get_probe()
             .format(&hint, mss, &format_opts, &metadata_opts)
             .context("Failed to probe audio file")?;
-        
+
         let mut format = probed.format;
-        
+
         let mut title = None;
         let mut artist = None;
         let mut album = None;
-        
+
         // Get metadata from the format
         if let Some(metadata_rev) = format.metadata().current() {
             for tag in metadata_rev.tags() {
@@ -135,23 +134,23 @@ impl TrackInfo {
                 }
             }
         }
-        
+
         let mut sample_rate = None;
         let mut channels = None;
         let mut duration_secs = None;
-        
+
         // Get track information
         if let Some(track) = format.default_track() {
             let codec_params = &track.codec_params;
-            
+
             sample_rate = codec_params.sample_rate;
             channels = codec_params.channels.map(|c| c.count() as u8);
-            
+
             if let (Some(n_frames), Some(sr)) = (codec_params.n_frames, codec_params.sample_rate) {
                 duration_secs = Some(n_frames as f32 / sr as f32);
             }
         }
-        
+
         Ok(TrackInfo {
             path: path.clone(),
             title,
@@ -176,35 +175,41 @@ impl AudioEngine {
     pub fn new() -> Result<Self> {
         let (command_tx, command_rx) = crossbeam_channel::unbounded();
         let (event_tx, event_rx) = crossbeam_channel::unbounded();
-        
+
         let thread_handle = thread::spawn(move || {
-            if let Err(e) = audio_thread_symphonia::audio_thread_main_symphonia(command_rx, event_tx) {
+            if let Err(e) =
+                audio_thread_symphonia::audio_thread_main_symphonia(command_rx, event_tx)
+            {
                 eprintln!("Audio thread error: {}", e);
             }
         });
-        
+
         Ok(AudioEngine {
             command_tx,
             event_rx,
             thread_handle: Some(thread_handle),
         })
     }
-    
+
     /// Send a command to the audio thread
     pub fn send_command(&self, cmd: AudioCommand) -> Result<()> {
-        self.command_tx.send(cmd).context("Failed to send command to audio thread")
+        self.command_tx
+            .send(cmd)
+            .context("Failed to send command to audio thread")
     }
-    
+
     /// Try to receive an event from the audio thread (non-blocking)
     pub fn try_recv_event(&self) -> Option<AudioEvent> {
         self.event_rx.try_recv().ok()
     }
-    
+
     /// Shutdown the audio engine
     pub fn shutdown(mut self) -> Result<()> {
         self.send_command(AudioCommand::Shutdown)?;
         if let Some(handle) = self.thread_handle.take() {
-            handle.join().map_err(|_| anyhow::anyhow!("Failed to join audio thread"))?;
+            handle
+                .join()
+                .map_err(|_| anyhow::anyhow!("Failed to join audio thread"))?;
         }
         Ok(())
     }
@@ -220,28 +225,29 @@ impl Drop for AudioEngine {
 }
 
 /// Main audio thread function
+#[allow(dead_code)]
 fn audio_thread_main(
     command_rx: Receiver<AudioCommand>,
     event_tx: Sender<AudioEvent>,
 ) -> Result<()> {
-    let (_stream, stream_handle) = OutputStream::try_default()
-        .context("Failed to get default audio output device")?;
-    
+    let (_stream, stream_handle) =
+        OutputStream::try_default().context("Failed to get default audio output device")?;
+
     let mut sink: Option<Sink> = None;
     let mut current_track: Option<TrackInfo> = None;
     let mut is_paused = false;
-    
+
     // Create equalizer (shared between audio processing and command handling)
     let equalizer = std::sync::Arc::new(std::sync::Mutex::new(Equalizer::new(44100.0)));
-    
+
     // Create audio capture buffer for visualization
     let capture_buffer = std::sync::Arc::new(std::sync::Mutex::new(AudioCaptureBuffer::new(2048)));
     let capture_buffer_clone = capture_buffer.clone();
-    
+
     // Throttle position updates to reduce allocations
     let mut last_position_update = std::time::Instant::now();
     let position_update_interval = Duration::from_millis(100);
-    
+
     loop {
         // Check for commands
         if let Ok(cmd) = command_rx.try_recv() {
@@ -249,27 +255,34 @@ fn audio_thread_main(
                 AudioCommand::Play(path) => {
                     // Stop current playback
                     sink = None;
-                    
+
                     // Load track metadata
                     match TrackInfo::from_file(&path) {
                         Ok(track_info) => {
                             current_track = Some(track_info.clone());
                             let _ = event_tx.send(AudioEvent::TrackLoaded(track_info));
-                            
+
                             // Load and play the file
-                            match load_and_play(&path, &stream_handle, equalizer.clone(), capture_buffer.clone()) {
+                            match load_and_play(
+                                &path,
+                                &stream_handle,
+                                equalizer.clone(),
+                                capture_buffer.clone(),
+                            ) {
                                 Ok(new_sink) => {
                                     sink = Some(new_sink);
                                     is_paused = false;
                                     let _ = event_tx.send(AudioEvent::Playing);
                                 }
                                 Err(e) => {
-                                    let _ = event_tx.send(AudioEvent::Error(format!("Failed to play: {}", e)));
+                                    let _ = event_tx
+                                        .send(AudioEvent::Error(format!("Failed to play: {}", e)));
                                 }
                             }
                         }
                         Err(e) => {
-                            let _ = event_tx.send(AudioEvent::Error(format!("Failed to load track: {}", e)));
+                            let _ = event_tx
+                                .send(AudioEvent::Error(format!("Failed to load track: {}", e)));
                         }
                     }
                 }
@@ -301,27 +314,33 @@ fn audio_thread_main(
                     if let Some(ref track) = current_track {
                         // Stop current playback
                         sink = None;
-                        
+
                         // Reload and seek by skipping to position
                         // Note: This is a limitation of rodio - it restarts playback
-                        match load_and_play(&track.path, &stream_handle, equalizer.clone(), capture_buffer.clone()) {
+                        match load_and_play(
+                            &track.path,
+                            &stream_handle,
+                            equalizer.clone(),
+                            capture_buffer.clone(),
+                        ) {
                             Ok(new_sink) => {
                                 // Skip to the desired position
                                 new_sink.skip_one();
                                 // Note: rodio doesn't support precise seeking
                                 // We can only restart playback
                                 // A proper implementation would require a custom decoder
-                                
+
                                 if is_paused {
                                     new_sink.pause();
                                 }
-                                
+
                                 sink = Some(new_sink);
                                 // Send Playing event to update UI
                                 let _ = event_tx.send(AudioEvent::Playing);
                             }
                             Err(e) => {
-                                let _ = event_tx.send(AudioEvent::Error(format!("Failed to seek: {}", e)));
+                                let _ = event_tx
+                                    .send(AudioEvent::Error(format!("Failed to seek: {}", e)));
                             }
                         }
                     }
@@ -376,7 +395,7 @@ fn audio_thread_main(
                 }
             }
         }
-        
+
         // Update playback position
         if let Some(ref s) = sink {
             if s.empty() {
@@ -395,7 +414,7 @@ fn audio_thread_main(
                     }
                     last_position_update = std::time::Instant::now();
                 }
-                
+
                 // Send visualization data
                 if let Ok(buffer) = capture_buffer_clone.lock() {
                     let samples = buffer.get_samples().to_vec();
@@ -403,44 +422,41 @@ fn audio_thread_main(
                 }
             }
         }
-        
+
         // Sleep to avoid busy-waiting
         thread::sleep(Duration::from_millis(50));
     }
-    
+
     Ok(())
 }
 
 /// Load and play an audio file
+#[allow(dead_code)]
 fn load_and_play(
     path: &PathBuf,
     stream_handle: &OutputStreamHandle,
     equalizer: std::sync::Arc<std::sync::Mutex<Equalizer>>,
     capture_buffer: std::sync::Arc<std::sync::Mutex<AudioCaptureBuffer>>,
 ) -> Result<Sink> {
-    let file = BufReader::new(
-        File::open(path).context("Failed to open audio file for playback")?
-    );
-    
+    let file = BufReader::new(File::open(path).context("Failed to open audio file for playback")?);
+
     let source = Decoder::new(file).context("Failed to decode audio file")?;
-    
+
     // Wrap source with equalizer
     let eq_source = EqualizerSource::new(source, equalizer);
-    
+
     // Wrap with audio capture for visualization
     let capture_source = AudioCaptureSource::new(eq_source, capture_buffer);
-    
+
     let sink = Sink::try_new(stream_handle).context("Failed to create audio sink")?;
     sink.append(capture_source);
-    
+
     Ok(sink)
 }
-
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[test]
     fn test_audio_engine_creation() {
@@ -461,40 +477,49 @@ mod tests {
     fn test_audio_command_send() {
         // Test that commands can be sent to the audio engine
         let engine = AudioEngine::new().expect("Failed to create AudioEngine");
-        
+
         // Send a stop command (safe even if nothing is playing)
         let result = engine.send_command(AudioCommand::Stop);
         assert!(result.is_ok(), "Should be able to send Stop command");
-        
+
         // Send equalizer commands
         let result = engine.send_command(AudioCommand::SetEqualizerEnabled(true));
-        assert!(result.is_ok(), "Should be able to send SetEqualizerEnabled command");
-        
+        assert!(
+            result.is_ok(),
+            "Should be able to send SetEqualizerEnabled command"
+        );
+
         let result = engine.send_command(AudioCommand::ResetEqualizer);
-        assert!(result.is_ok(), "Should be able to send ResetEqualizer command");
+        assert!(
+            result.is_ok(),
+            "Should be able to send ResetEqualizer command"
+        );
     }
 
     #[test]
     fn test_audio_event_reception() {
         // Test that events can be received from the audio engine
         let engine = AudioEngine::new().expect("Failed to create AudioEngine");
-        
+
         // Try to receive events (should be non-blocking)
         let event = engine.try_recv_event();
         // Either None or Some(event) is fine, just shouldn't panic
         // We just verify it returns an Option
-        assert!(event.is_none() || event.is_some(), "Should return an Option");
+        assert!(
+            event.is_none() || event.is_some(),
+            "Should return an Option"
+        );
     }
 
     #[test]
     fn test_equalizer_commands() {
         // Test equalizer-related commands
         let engine = AudioEngine::new().expect("Failed to create AudioEngine");
-        
+
         // Test setting individual band
         let result = engine.send_command(AudioCommand::SetEqualizerBand(0, 3.0));
         assert!(result.is_ok(), "Should be able to set equalizer band");
-        
+
         // Test setting all bands
         let gains = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
         let result = engine.send_command(AudioCommand::SetEqualizerBands(gains));
@@ -513,7 +538,7 @@ mod tests {
             sample_rate: Some(44100),
             channels: Some(2),
         };
-        
+
         assert_eq!(track.title, Some("Test Track".to_string()));
         assert_eq!(track.sample_rate, Some(44100));
         assert_eq!(track.channels, Some(2));
@@ -523,15 +548,15 @@ mod tests {
     fn test_audio_capture_buffer() {
         // Test AudioCaptureBuffer
         let mut buffer = AudioCaptureBuffer::new(1024);
-        
+
         // Initially should be empty or zeros
         let samples = buffer.get_samples();
         assert_eq!(samples.len(), 1024, "Buffer should have correct size");
-        
+
         // Update with some samples
         let test_samples: Vec<f32> = (0..512).map(|i| (i as f32) / 512.0).collect();
         buffer.update(&test_samples, 44100, 2);
-        
+
         // Verify samples were added
         let retrieved = buffer.get_samples();
         assert_eq!(retrieved.len(), 1024, "Buffer size should remain constant");
@@ -544,10 +569,10 @@ mod tests {
         // Test that AudioCommand can be cloned
         let cmd1 = AudioCommand::Stop;
         let cmd2 = cmd1.clone();
-        
+
         // Both should be Stop
         match (cmd1, cmd2) {
-            (AudioCommand::Stop, AudioCommand::Stop) => {},
+            (AudioCommand::Stop, AudioCommand::Stop) => {}
             _ => panic!("Commands should both be Stop"),
         }
     }
@@ -558,7 +583,7 @@ mod tests {
         // (This tests the singleton behavior of audio output)
         let engine1 = AudioEngine::new();
         assert!(engine1.is_ok(), "First engine should be created");
-        
+
         // Note: Creating a second engine might fail or succeed depending on the audio backend
         // We just test that it doesn't panic
         let _engine2 = AudioEngine::new();

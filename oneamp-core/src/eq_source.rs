@@ -1,7 +1,7 @@
+use crate::equalizer::Equalizer;
 use rodio::Source;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use crate::equalizer::Equalizer;
 
 /// A wrapper Source that applies equalization to another Source
 pub struct EqualizerSource<S>
@@ -23,7 +23,7 @@ where
         if let Ok(mut eq) = equalizer.lock() {
             eq.set_sample_rate(source.sample_rate() as f32);
         }
-        
+
         Self {
             source,
             equalizer,
@@ -38,7 +38,7 @@ where
     S: Source<Item = i16>,
 {
     type Item = i16;
-    
+
     fn next(&mut self) -> Option<Self::Item> {
         // If we have buffered samples, return them first
         if self.buffer_pos < self.buffer.len() {
@@ -46,14 +46,14 @@ where
             self.buffer_pos += 1;
             return Some(sample);
         }
-        
+
         // Clear buffer and reset position
         self.buffer.clear();
         self.buffer_pos = 0;
-        
+
         // Get number of channels
         let channels = self.source.channels();
-        
+
         if channels == 1 {
             // Mono: process single sample
             if let Some(sample) = self.source.next() {
@@ -71,18 +71,20 @@ where
             // Stereo: process pair of samples
             let left = self.source.next()?;
             let right = self.source.next()?;
-            
+
             if let Ok(mut eq) = self.equalizer.lock() {
                 let left_f32 = left as f32 / 32768.0;
                 let right_f32 = right as f32 / 32768.0;
                 let (left_out, right_out) = eq.process_stereo(left_f32, right_f32);
-                self.buffer.push((left_out * 32768.0).clamp(-32768.0, 32767.0) as i16);
-                self.buffer.push((right_out * 32768.0).clamp(-32768.0, 32767.0) as i16);
+                self.buffer
+                    .push((left_out * 32768.0).clamp(-32768.0, 32767.0) as i16);
+                self.buffer
+                    .push((right_out * 32768.0).clamp(-32768.0, 32767.0) as i16);
             } else {
                 self.buffer.push(left);
                 self.buffer.push(right);
             }
-            
+
             // Return first sample
             self.buffer_pos = 1;
             Some(self.buffer[0])
@@ -100,15 +102,15 @@ where
     fn current_frame_len(&self) -> Option<usize> {
         self.source.current_frame_len()
     }
-    
+
     fn channels(&self) -> u16 {
         self.source.channels()
     }
-    
+
     fn sample_rate(&self) -> u32 {
         self.source.sample_rate()
     }
-    
+
     fn total_duration(&self) -> Option<Duration> {
         self.source.total_duration()
     }

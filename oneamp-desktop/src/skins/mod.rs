@@ -3,9 +3,9 @@
 
 pub mod manager;
 pub mod parser;
-pub mod ui;
 #[cfg(test)]
 mod tests;
+pub mod ui;
 
 pub use manager::SkinManager;
 

@@ -5,9 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use crate::{AudioCommand, AudioEvent, TrackInfo, Equalizer, AudioCaptureBuffer};
-use crate::symphonia_player::SymphoniaPlayer;
 use crate::rodio_output::RodioOutput;
+use crate::symphonia_player::SymphoniaPlayer;
+use crate::{AudioCaptureBuffer, AudioCommand, AudioEvent, Equalizer, TrackInfo};
 
 /// Audio playback state
 struct PlaybackState {
@@ -23,18 +23,18 @@ pub fn audio_thread_main_symphonia(
 ) -> Result<()> {
     let mut playback: Option<PlaybackState> = None;
     let mut current_track: Option<TrackInfo> = None;
-    
+
     // Create equalizer (shared between audio processing and command handling)
     let equalizer = Arc::new(Mutex::new(Equalizer::new(44100.0)));
-    
+
     // Create audio capture buffer for visualization
     let capture_buffer = Arc::new(Mutex::new(AudioCaptureBuffer::new(2048)));
     let capture_buffer_clone = capture_buffer.clone();
-    
+
     // Throttle position updates to reduce allocations
     let mut last_position_update = std::time::Instant::now();
     let position_update_interval = Duration::from_millis(100);
-    
+
     loop {
         // Check for commands
         if let Ok(cmd) = command_rx.try_recv() {
@@ -42,13 +42,13 @@ pub fn audio_thread_main_symphonia(
                 AudioCommand::Play(path) => {
                     // Stop current playback
                     playback = None;
-                    
+
                     // Load track metadata
                     match TrackInfo::from_file(&path) {
                         Ok(track_info) => {
                             current_track = Some(track_info.clone());
                             let _ = event_tx.send(AudioEvent::TrackLoaded(track_info));
-                            
+
                             // Load and play the file
                             match load_and_play(&path, equalizer.clone(), capture_buffer.clone()) {
                                 Ok(state) => {
@@ -56,12 +56,14 @@ pub fn audio_thread_main_symphonia(
                                     let _ = event_tx.send(AudioEvent::Playing);
                                 }
                                 Err(e) => {
-                                    let _ = event_tx.send(AudioEvent::Error(format!("Failed to play: {}", e)));
+                                    let _ = event_tx
+                                        .send(AudioEvent::Error(format!("Failed to play: {}", e)));
                                 }
                             }
                         }
                         Err(e) => {
-                            let _ = event_tx.send(AudioEvent::Error(format!("Failed to load track: {}", e)));
+                            let _ = event_tx
+                                .send(AudioEvent::Error(format!("Failed to load track: {}", e)));
                         }
                     }
                 }
@@ -98,7 +100,8 @@ pub fn audio_thread_main_symphonia(
                                 let _ = event_tx.send(AudioEvent::Playing);
                             }
                             Err(e) => {
-                                let _ = event_tx.send(AudioEvent::Error(format!("Failed to seek: {}", e)));
+                                let _ = event_tx
+                                    .send(AudioEvent::Error(format!("Failed to seek: {}", e)));
                             }
                         }
                     }
@@ -151,7 +154,7 @@ pub fn audio_thread_main_symphonia(
                 }
             }
         }
-        
+
         // Decode and feed audio to output
         let mut end_of_stream = false;
         if let Some(ref mut state) = playback {
@@ -174,7 +177,7 @@ pub fn audio_thread_main_symphonia(
                         }
                     }
                 }
-                
+
                 // Send position update (throttled)
                 if last_position_update.elapsed() >= position_update_interval {
                     if let Some(ref track) = current_track {
@@ -184,7 +187,7 @@ pub fn audio_thread_main_symphonia(
                     }
                     last_position_update = std::time::Instant::now();
                 }
-                
+
                 // Send visualization data
                 if let Ok(buffer) = capture_buffer_clone.lock() {
                     let samples = buffer.get_samples().to_vec();
@@ -192,35 +195,35 @@ pub fn audio_thread_main_symphonia(
                 }
             }
         }
-        
+
         // Handle end of stream outside the borrow
         if end_of_stream {
             playback = None;
             current_track = None;
             let _ = event_tx.send(AudioEvent::Finished);
         }
-        
+
         // Small sleep to avoid busy-waiting
         thread::sleep(Duration::from_millis(1));
     }
-    
+
     Ok(())
 }
 
 /// Load and start playing an audio file
 fn load_and_play(
-    path: &PathBuf,
+    path: &Path,
     equalizer: Arc<Mutex<Equalizer>>,
     capture_buffer: Arc<Mutex<AudioCaptureBuffer>>,
 ) -> Result<PlaybackState> {
     // Create player
     let player = SymphoniaPlayer::load(path, equalizer, capture_buffer)
         .context("Failed to load audio file")?;
-    
+
     // Create output
     let output = RodioOutput::new(player.sample_rate(), player.channels())
         .context("Failed to create audio output")?;
-    
+
     Ok(PlaybackState {
         player,
         output,

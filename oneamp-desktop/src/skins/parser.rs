@@ -1,16 +1,16 @@
 // Skin TOML Parser
 // Responsible for loading and validating skin.toml files.
 
-use super::{Skin, Metadata, Colors, Fonts, Metrics};
+use super::{Colors, Fonts, Metadata, Metrics, Skin};
 use anyhow::{anyhow, Result};
 use std::fs;
 use std::path::Path;
 
 /// Loads a skin from a skin.toml file.
-/// 
+///
 /// # Arguments
 /// * `skin_dir` - Path to the directory containing the skin.toml file
-/// 
+///
 /// # Returns
 /// A `Skin` struct if successful, or an error if the file is missing or invalid.
 pub fn load_skin(skin_dir: &Path) -> Result<Skin> {
@@ -20,11 +20,11 @@ pub fn load_skin(skin_dir: &Path) -> Result<Skin> {
         return Err(anyhow!("skin.toml not found in {:?}", skin_dir));
     }
 
-    let content = fs::read_to_string(&skin_file)
-        .map_err(|e| anyhow!("Failed to read skin.toml: {}", e))?;
+    let content =
+        fs::read_to_string(&skin_file).map_err(|e| anyhow!("Failed to read skin.toml: {}", e))?;
 
-    let mut skin: Skin = toml::from_str(&content)
-        .map_err(|e| anyhow!("Failed to parse skin.toml: {}", e))?;
+    let mut skin: Skin =
+        toml::from_str(&content).map_err(|e| anyhow!("Failed to parse skin.toml: {}", e))?;
 
     // Set the skin's path for relative asset resolution
     skin.path = skin_dir.to_path_buf();

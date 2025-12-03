@@ -1,8 +1,8 @@
 // Plugin Trait Definitions
 // Defines the interfaces that all plugins must implement.
 
-use std::path::Path;
 use super::error::PluginResult;
+use std::path::Path;
 
 /// Metadata about an audio file.
 #[derive(Debug, Clone)]
@@ -158,7 +158,11 @@ pub trait OutputPlugin: Send + Sync {
     fn list_devices(&self) -> PluginResult<Vec<AudioDevice>>;
 
     /// Opens an audio device for playback.
-    fn open(&self, device: &AudioDevice, config: &AudioConfig) -> PluginResult<Box<dyn AudioOutput>>;
+    fn open(
+        &self,
+        device: &AudioDevice,
+        config: &AudioConfig,
+    ) -> PluginResult<Box<dyn AudioOutput>>;
 }
 
 /// Information about a DSP plugin parameter.

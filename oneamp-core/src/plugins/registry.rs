@@ -1,10 +1,10 @@
 // Plugin Registry
 // Manages plugin discovery, loading, and lifecycle.
 
+use super::error::PluginResult;
+use super::traits::{DSPPlugin, InputPlugin, OutputPlugin};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use super::traits::{InputPlugin, OutputPlugin, DSPPlugin};
-use super::error::PluginResult;
 
 /// Central registry for managing plugins.
 /// Handles plugin discovery, loading, and provides access to registered plugins.
@@ -33,10 +33,7 @@ impl PluginRegistry {
     /// This should be called once at application startup.
     pub fn discover_plugins(&mut self) -> PluginResult<()> {
         if !self.plugin_dir.exists() {
-            eprintln!(
-                "Plugin directory not found: {:?}",
-                self.plugin_dir
-            );
+            eprintln!("Plugin directory not found: {:?}", self.plugin_dir);
             return Ok(());
         }
 
