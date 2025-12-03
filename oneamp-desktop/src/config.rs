@@ -23,6 +23,12 @@ pub struct AppConfig {
     pub equalizer: EqualizerConfig,
     #[serde(default = "default_first_run")]
     pub first_run: bool,
+    #[serde(default = "default_active_skin")]
+    pub active_skin: String,
+}
+
+fn default_active_skin() -> String {
+    "OneAmp Dark".to_string()
 }
 
 fn default_first_run() -> bool {
@@ -34,6 +40,7 @@ impl Default for AppConfig {
         Self {
             equalizer: EqualizerConfig::default(),
             first_run: true,
+            active_skin: default_active_skin(),
         }
     }
 }

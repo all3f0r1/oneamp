@@ -40,6 +40,9 @@ use onedrop_visualizer::OneDropVisualizer;
 mod platform_detection;
 use platform_detection::PlatformInfo;
 
+mod skins;
+use skins::SkinManager;
+
 fn main() -> eframe::Result {
     let theme = Theme::default();
     
@@ -97,6 +100,10 @@ struct OneAmpApp {
     // Theme
     theme: Theme,
     
+    // Skin system
+    skin_manager: SkinManager,
+    show_skin_selector: bool,
+    
     // UI state
     scroll_offset: usize,
     last_scroll_update: std::time::Instant,
@@ -145,6 +152,21 @@ impl OneAmpApp {
         
         let (config, is_first_run) = AppConfig::load();
         
+        // Initialize skin manager
+        let skins_dir = dirs::config_dir()
+            .map(|d| d.join("oneamp").join("skins"))
+            .unwrap_or_else(|| PathBuf::from("./skins"));
+        
+        let mut skin_manager = SkinManager::discover_and_load(&skins_dir);
+        
+        // Load the active skin from config
+        if let Some(index) = skin_manager.find_skin_by_name(&config.active_skin) {
+            skin_manager.set_active_skin(index);
+        }
+        
+        // Apply the active skin
+        skin_manager.apply_skin(&cc.egui_ctx);
+        
         let mut app = Self {
             audio_engine,
             current_track: None,
@@ -161,6 +183,8 @@ impl OneAmpApp {
             show_equalizer: false,
             visualizer: Visualizer::new(),
             theme,
+            skin_manager,
+            show_skin_selector: false,
             scroll_offset: 0,
             last_scroll_update: std::time::Instant::now(),
             animation_timer: AnimationTimer::new(),
@@ -433,6 +457,9 @@ impl OneAmpApp {
 
 impl eframe::App for OneAmpApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Apply the active skin at the beginning of each frame
+        self.skin_manager.apply_skin(ctx);
+        
         self.theme.apply_to_egui(ctx);
         
         // Custom window chrome (platform-specific)
