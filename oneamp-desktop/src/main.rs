@@ -537,11 +537,7 @@ impl eframe::App for OneAmpApp {
             let skin_changed = egui::Window::new("Skin Selector")
                 .open(&mut self.show_skin_selector)
                 .show(ctx, |ui| {
-                    skins::ui::skin_selector_dialog(
-                        ui,
-                        &mut self.skin_manager,
-                        &mut self.show_skin_selector,
-                    )
+                    skins::ui::skin_selector_dialog(ui, &mut self.skin_manager)
                 })
                 .and_then(|r| r.inner)
                 .unwrap_or(false);

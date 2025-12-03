@@ -116,83 +116,69 @@ pub fn skin_info_panel(ui: &mut Ui, skin_manager: &SkinManager) {
 /// # Arguments
 /// * `ui` - The egui UI context
 /// * `skin_manager` - The skin manager instance
-/// * `show_dialog` - Whether to show the dialog
 ///
 /// # Returns
 /// `true` if a skin was selected, `false` otherwise
-pub fn skin_selector_dialog(
-    ui: &mut Ui,
-    skin_manager: &mut SkinManager,
-    show_dialog: &mut bool,
-) -> bool {
+pub fn skin_selector_dialog(ui: &mut Ui, skin_manager: &mut SkinManager) -> bool {
     let mut skin_changed = false;
 
-    if *show_dialog {
-        // Collect skin data before the window to avoid borrow checker issues
-        let skins_data: Vec<_> = skin_manager
-            .available_skins
-            .iter()
-            .enumerate()
-            .map(|(index, skin)| {
-                (
-                    index,
-                    skin.metadata.name.clone(),
-                    skin.metadata.description.clone(),
-                    skin.metadata.author.clone(),
-                    index == skin_manager.active_skin_index,
-                )
-            })
-            .collect();
+    // Collect skin data before rendering to avoid borrow checker issues
+    let skins_data: Vec<_> = skin_manager
+        .available_skins
+        .iter()
+        .enumerate()
+        .map(|(index, skin)| {
+            (
+                index,
+                skin.metadata.name.clone(),
+                skin.metadata.description.clone(),
+                skin.metadata.author.clone(),
+                index == skin_manager.active_skin_index,
+            )
+        })
+        .collect();
 
-        egui::Window::new("Select Skin")
-            .open(show_dialog)
-            .resizable(true)
-            .default_width(300.0)
-            .show(ui.ctx(), |ui| {
-                ui.label("Available Skins:");
-                ui.separator();
+    ui.label("Available Skins:");
+    ui.separator();
 
-                for (index, name, description, author, is_active) in skins_data {
-                    ui.group(|ui| {
-                        ui.vertical(|ui| {
-                            let label = if is_active {
-                                RichText::new(&name)
-                                    .strong()
-                                    .color(egui::Color32::from_rgb(0, 212, 255))
-                            } else {
-                                RichText::new(&name).strong()
-                            };
+    for (index, name, description, author, is_active) in skins_data {
+        ui.group(|ui| {
+            ui.vertical(|ui| {
+                let label = if is_active {
+                    RichText::new(&name)
+                        .strong()
+                        .color(egui::Color32::from_rgb(0, 212, 255))
+                } else {
+                    RichText::new(&name).strong()
+                };
 
-                            ui.label(label);
-                            ui.label(
-                                RichText::new(&description)
-                                    .small()
-                                    .color(egui::Color32::GRAY),
-                            );
-                            ui.label(
-                                RichText::new(format!("by {}", author))
-                                    .small()
-                                    .color(egui::Color32::DARK_GRAY),
-                            );
+                ui.label(label);
+                ui.label(
+                    RichText::new(&description)
+                        .small()
+                        .color(egui::Color32::GRAY),
+                );
+                ui.label(
+                    RichText::new(format!("by {}", author))
+                        .small()
+                        .color(egui::Color32::DARK_GRAY),
+                );
 
-                            ui.horizontal(|ui| {
-                                if !is_active && ui.button("Select").clicked() {
-                                    if skin_manager.set_active_skin(index) {
-                                        skin_changed = true;
-                                    }
-                                }
+                ui.horizontal(|ui| {
+                    if !is_active && ui.button("Select").clicked() {
+                        if skin_manager.set_active_skin(index) {
+                            skin_changed = true;
+                        }
+                    }
 
-                                if is_active {
-                                    ui.label(
-                                        RichText::new("✓ Active")
-                                            .color(egui::Color32::from_rgb(0, 212, 255)),
-                                    );
-                                }
-                            });
-                        });
-                    });
-                }
+                    if is_active {
+                        ui.label(
+                            RichText::new("✓ Active").color(egui::Color32::from_rgb(0, 212, 255)),
+                        );
+                    }
+                });
             });
+        });
     }
 
     skin_changed

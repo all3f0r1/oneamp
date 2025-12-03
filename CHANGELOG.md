@@ -5,6 +5,23 @@ All notable changes to OneAmp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.8] - 2025-12-03
+
+### Fixed
+- **Borrow Checker Error E0500**: Fixed closure requiring unique access to `show_skin_selector`
+- **Window Parameter Conflict**: Removed `show_dialog` parameter from skin_selector_dialog
+- **Closure Borrow Issue**: Window.open() and closure no longer conflict over show_skin_selector
+
+### Changed
+- **Skin Selector Dialog**: Simplified to work directly within Window context
+- **Function Signature**: skin_selector_dialog now takes only (ui, skin_manager)
+- **Window Management**: Window.open() handles show_skin_selector state in main.rs
+
+### Technical
+- Window wrapper in main.rs manages the open/close state
+- Dialog function focuses on rendering content only
+- Cleaner separation of concerns between window state and content
+
 ## [0.14.7] - 2025-12-03
 
 ### Fixed
