@@ -54,7 +54,7 @@ jobs:
       - name: Run doc tests
         env:
           PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
-        run: cargo test --doc --verbose --all
+        run: cargo test --doc --verbose --all --no-default-features
 
   fmt:
     name: Rustfmt

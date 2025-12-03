@@ -5,6 +5,22 @@ All notable changes to OneAmp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.5] - 2025-12-03
+
+### Added
+- **Documentation Generation**: New GitHub Actions workflow to generate Rust documentation with cargo doc
+- **GitHub Pages Publishing**: Automatic deployment of generated documentation to GitHub Pages
+- **Documentation Index**: Custom HTML index page for easy navigation between modules
+- **Docs Workflow**: Triggers on master branch pushes and version tags
+
+### Fixed
+- **ALSA in Doc Tests**: Disabled default features for doc tests to avoid ALSA compilation issues
+- **Documentation Build**: Separated doc generation from regular builds for better reliability
+
+### Changed
+- **CI Workflow**: Modified doc tests to use --no-default-features flag
+- **Documentation Deployment**: Added peaceiris/actions-gh-pages action for automatic publishing
+
 ## [0.14.4] - 2025-12-03
 
 ### Fixed
