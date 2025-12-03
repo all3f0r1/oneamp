@@ -1,0 +1,10 @@
+[package]
+name = "oneamp-dsp-reverb"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+oneamp-core = { path = "../../oneamp-core" }
+
+[lib]
+crate-type = ["cdylib"]

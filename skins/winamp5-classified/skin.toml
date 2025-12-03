@@ -1,0 +1,61 @@
+# Winamp5 Classified Theme
+# A faithful recreation of the classic Winamp5 "Classified" skin.
+# Original skin by Zarko Jovic and GuidoD, converted for OneAmp.
+
+[metadata]
+name = "Winamp5 Classified"
+author = "Zarko Jovic & GuidoD (Converted by Manus AI)"
+version = "1.0"
+description = "A classic Winamp 5.x look and feel with the iconic blue color scheme."
+
+[colors]
+# Dark mode enabled (Winamp classic is dark)
+dark_mode = true
+
+# Main UI colors - Winamp classic blue palette
+background = "#1C3D7D"
+text = "#FFFFFF"
+window_fill = "#1C3D7D"
+window_stroke = "#6788C9"
+panel_fill = "#102A54"
+
+# Widget colors
+widget_bg = "#2A4B8F"
+widget_stroke = "#6788C9"
+hovered_widget_bg = "#4A6BAF"
+active_widget_bg = "#6788C9"
+inactive_widget_bg = "#102A54"
+
+# Special colors
+accent = "#BBD2FF"
+error = "#FF4444"
+warning = "#FFBB33"
+
+# Playlist specific - matching Winamp's playlist colors
+playlist_current_track = "#BBD2FF"
+playlist_selected_bg = "#6788C9"
+
+[fonts]
+# Winamp classic uses Arial
+proportional = "Arial"
+
+# Monospaced for detailed info
+monospace = "Courier New"
+
+# Optional custom digital font for timer
+# timer_font = "fonts/digital.ttf"
+
+[metrics]
+# Winamp classic has minimal rounding
+window_rounding = 0.0
+widget_rounding = 0.0
+scrollbar_width = 8.0
+
+# Tight spacing for compact look
+window_padding = 4.0
+button_padding = [8.0, 2.0]
+
+# Text sizes
+body_text_size = 11.0
+heading_text_size = 12.0
+timer_text_size = 32.0

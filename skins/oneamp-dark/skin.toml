@@ -1,0 +1,60 @@
+# OneAmp Dark Theme
+# The default theme for OneAmp with a modern dark aesthetic.
+
+[metadata]
+name = "OneAmp Dark"
+author = "Manus AI"
+version = "1.0"
+description = "The default OneAmp dark theme with a modern aesthetic."
+
+[colors]
+# Dark mode enabled
+dark_mode = true
+
+# Main UI colors
+background = "#0a0a0a"
+text = "#ffffff"
+window_fill = "#1a1a1a"
+window_stroke = "#404040"
+panel_fill = "#0f0f0f"
+
+# Widget colors
+widget_bg = "#2a2a2a"
+widget_stroke = "#404040"
+hovered_widget_bg = "#3a3a3a"
+active_widget_bg = "#4a4a4a"
+inactive_widget_bg = "#1a1a1a"
+
+# Special colors
+accent = "#00d4ff"
+error = "#ff4444"
+warning = "#ffbb33"
+
+# Playlist specific
+playlist_current_track = "#00d4ff"
+playlist_selected_bg = "#404040"
+
+[fonts]
+# Default proportional font
+proportional = "Arial"
+
+# Monospaced font for timers and detailed info
+monospace = "Courier New"
+
+# Optional custom font for timer display
+# timer_font = "fonts/digital.ttf"
+
+[metrics]
+# Window and widget styling
+window_rounding = 4.0
+widget_rounding = 2.0
+scrollbar_width = 8.0
+
+# Spacing
+window_padding = 8.0
+button_padding = [12.0, 4.0]
+
+# Text sizes
+body_text_size = 14.0
+heading_text_size = 18.0
+timer_text_size = 48.0

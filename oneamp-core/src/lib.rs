@@ -18,6 +18,7 @@ pub mod symphonia_player;
 pub mod cpal_output;
 pub mod rodio_output;
 pub mod audio_thread_symphonia;
+pub mod plugins;
 
 pub use equalizer::Equalizer;
 pub use eq_source::EqualizerSource;
