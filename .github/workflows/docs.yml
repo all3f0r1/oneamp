@@ -51,7 +51,7 @@ jobs:
       - name: Generate documentation
         env:
           RUSTDOCFLAGS: "--enable-index-page -Z unstable-options"
-        run: cargo doc --verbose --all --no-deps --document-private-items
+        run: cargo doc --verbose --all --no-deps --document-private-items --no-default-features
       
       - name: Create index.html
         run: |

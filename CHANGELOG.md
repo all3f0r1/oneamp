@@ -5,6 +5,29 @@ All notable changes to OneAmp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.6] - 2025-12-03
+
+### Added
+- **Audio Feature Flag**: New optional "audio" feature in Cargo that enables ALSA/rodio support
+- **Minimal Builds**: Support for building without audio dependencies via --no-default-features
+- **Feature Documentation**: Metadata for docs.rs to build with all features
+
+### Fixed
+- **ALSA Compilation**: Permanently resolved ALSA compilation issues by making audio optional
+- **Documentation Builds**: Doc generation now works without ALSA/rodio dependencies
+- **CI/CD Reliability**: Separated audio feature from core compilation
+
+### Changed
+- **Cargo Dependencies**: rodio and cpal now optional, controlled by "audio" feature
+- **Default Behavior**: "audio" feature enabled by default for normal builds
+- **Doc Tests**: Now run with --no-default-features to avoid ALSA issues
+- **Workflows**: Updated CI and docs workflows to use feature flags appropriately
+
+### Architecture
+- **Feature Gates**: Added #[cfg(feature = "audio")] to audio-related modules
+- **Conditional Compilation**: cpal_output and rodio_output only compiled with audio feature
+- **Flexible Building**: Users can now compile OneAmp without audio system dependencies
+
 ## [0.14.5] - 2025-12-03
 
 ### Added

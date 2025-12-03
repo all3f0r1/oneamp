@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender};
+#[cfg(feature = "audio")]
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 use std::fs::File;
 use std::io::BufReader;
@@ -13,10 +14,12 @@ use symphonia::core::probe::Hint;
 
 pub mod audio_capture;
 pub mod audio_thread_symphonia;
+#[cfg(feature = "audio")]
 pub mod cpal_output;
 pub mod eq_source;
 pub mod equalizer;
 pub mod plugins;
+#[cfg(feature = "audio")]
 pub mod rodio_output;
 pub mod symphonia_player;
 

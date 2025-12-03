@@ -10,12 +10,17 @@ description = "OneAmp core audio engine library"
 name = "oneamp_core"
 path = "src/lib.rs"
 
+# Documentation settings
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--enable-index-page", "-Z", "unstable-options"]
+
 [dependencies]
 # Audio decoding
 symphonia.workspace = true
 
-# Audio playback
-rodio.workspace = true
+# Audio playback (optional, required for audio output)
+rodio = { workspace = true, optional = true }
 
 # Error handling
 anyhow.workspace = true
@@ -23,5 +28,11 @@ anyhow.workspace = true
 # Channels for thread communication
 crossbeam-channel.workspace = true
 
-# Audio output
-cpal.workspace = true
+# Audio output (optional, required for audio playback)
+cpal = { workspace = true, optional = true }
+
+[features]
+default = ["audio"]
+# Audio feature: enables audio playback and ALSA support
+# Disable this for documentation builds or minimal builds
+audio = ["rodio", "cpal"]
