@@ -5,6 +5,25 @@ All notable changes to OneAmp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2025-12-03
+
+### Added
+- Audio Format Detection: Improved metadata extraction to display codec, bitrate, sample rate, and channels
+- TrackInfo Enhancements: Added codec and bitrate fields to TrackInfo struct
+- Format Audio Info: New format_audio_info() method for human-readable audio information
+- Technical Info Display: Enhanced technical info display (e.g., MP3 • 320kbps • 44.1kHz • Stereo)
+
+### Changed
+- Audio Metadata: Now extracts codec information from symphonia codec parameters
+- Display Format: Technical info now shows complete audio details instead of just sample rate and channels
+- TrackDisplay: Updated to use new format_audio_info() method
+
+### Technical
+- Added codec and bitrate extraction in TrackInfo::from_file()
+- Implemented format_audio_info() with proper formatting and channel name mapping
+- Updated tests to include new codec and bitrate fields
+- Backward compatible with existing code
+
 ## [0.14.8] - 2025-12-03
 
 ### Fixed

@@ -93,9 +93,56 @@ pub struct TrackInfo {
     pub duration_secs: Option<f32>,
     pub sample_rate: Option<u32>,
     pub channels: Option<u8>,
+    /// Audio codec format (e.g., "MP3", "FLAC", "OGG", "WAV")
+    pub codec: Option<String>,
+    /// Bitrate in kbps
+    pub bitrate: Option<u32>,
 }
 
 impl TrackInfo {
+    /// Format audio information as a readable string
+    /// Example: "MP3 • 320kbps • 44.1kHz • Stereo"
+    pub fn format_audio_info(&self) -> String {
+        let mut parts = Vec::new();
+
+        // Add codec
+        if let Some(ref codec) = self.codec {
+            // Clean up codec name (remove debug formatting)
+            let clean_codec = codec
+                .replace("CODEC(", "")
+                .replace(")", "")
+                .replace("\"" , "")
+                .trim()
+                .to_string();
+            parts.push(clean_codec);
+        }
+
+        // Add bitrate
+        if let Some(bitrate) = self.bitrate {
+            parts.push(format!("{}kbps", bitrate / 1000));
+        }
+
+        // Add sample rate
+        if let Some(sr) = self.sample_rate {
+            let sr_khz = sr as f32 / 1000.0;
+            parts.push(format!("{}kHz", sr_khz));
+        }
+
+        // Add channels
+        if let Some(ch) = self.channels {
+            let channel_name = match ch {
+                1 => "Mono".to_string(),
+                2 => "Stereo".to_string(),
+                6 => "5.1".to_string(),
+                8 => "7.1".to_string(),
+                _ => format!("{}ch", ch),
+            };
+            parts.push(channel_name);
+        }
+
+        parts.join(" • ")
+    }
+
     /// Extract metadata from a file
     pub fn from_file(path: &PathBuf) -> Result<Self> {
         let file = File::open(path).context("Failed to open audio file for metadata reading")?;
@@ -141,6 +188,8 @@ impl TrackInfo {
         let mut sample_rate = None;
         let mut channels = None;
         let mut duration_secs = None;
+        let mut codec = None;
+        let mut bitrate = None;
 
         // Get track information
         if let Some(track) = format.default_track() {
@@ -148,6 +197,12 @@ impl TrackInfo {
 
             sample_rate = codec_params.sample_rate;
             channels = codec_params.channels.map(|c| c.count() as u8);
+            bitrate = codec_params.bit_rate;
+
+            // Extract codec name
+            if let Some(codec_profile) = &codec_params.codec {
+                codec = Some(format!("{:?}", codec_profile).to_uppercase());
+            }
 
             if let (Some(n_frames), Some(sr)) = (codec_params.n_frames, codec_params.sample_rate) {
                 duration_secs = Some(n_frames as f32 / sr as f32);
@@ -162,6 +217,8 @@ impl TrackInfo {
             duration_secs,
             sample_rate,
             channels,
+            codec,
+            bitrate,
         })
     }
 }

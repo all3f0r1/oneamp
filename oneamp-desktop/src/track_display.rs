@@ -70,8 +70,15 @@ impl TrackDisplay {
         }
     }
 
-    /// Get technical info string (bitrate, sample rate, channels)
+    /// Get technical info string (codec, bitrate, sample rate, channels)
+    /// Format: "MP3 • 320kbps • 44.1kHz • Stereo"
     pub fn get_technical_info(track: &TrackInfo) -> String {
+        track.format_audio_info()
+    }
+
+    /// Get legacy technical info string (sample rate and channels only)
+    /// Used for backward compatibility
+    pub fn get_technical_info_legacy(track: &TrackInfo) -> String {
         let mut parts = Vec::new();
 
         if let Some(sr) = track.sample_rate {
@@ -145,8 +152,31 @@ mod tests {
             duration_secs: Some(180.0),
             sample_rate: Some(44100),
             channels: Some(2),
+            codec: Some("MP3".to_string()),
+            bitrate: Some(320000),
         };
 
         assert_eq!(TrackDisplay::get_title(&track), "Test Artist - Test Song");
+    }
+
+    #[test]
+    fn test_get_technical_info() {
+        let track = TrackInfo {
+            path: PathBuf::from("/music/song.mp3"),
+            title: Some("Test Song".to_string()),
+            artist: Some("Test Artist".to_string()),
+            album: None,
+            duration_secs: Some(180.0),
+            sample_rate: Some(44100),
+            channels: Some(2),
+            codec: Some("MP3".to_string()),
+            bitrate: Some(320000),
+        };
+
+        let info = TrackDisplay::get_technical_info(&track);
+        assert!(info.contains("MP3"));
+        assert!(info.contains("320kbps"));
+        assert!(info.contains("44.1kHz"));
+        assert!(info.contains("Stereo"));
     }
 }
