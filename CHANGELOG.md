@@ -5,6 +5,30 @@ All notable changes to OneAmp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2] - 2025-12-03
+
+### Added
+- Phase 2: Layout and Spacing improvements
+- Increased font sizes: timer (48pt), track info (20pt), technical info (14pt)
+- Larger control buttons: Previous/Stop/Next (60px), Play/Pause (70px)
+- Improved spacing between sections (8px → 16px)
+- Better visual hierarchy with increased padding
+
+### Changed
+- Window minimum size: 600x500 → 700x600
+- Player section height: 150px → 200px
+- Equalizer section height: 180px → 220px
+- Layout spacing: 8px → 16px
+- Layout padding: 10px → 16px
+- Progress bar height: 20px → 28px
+- Control button spacing: 4px → 8px
+
+### Fixed
+- Elements too close together
+- Poor visual hierarchy
+- Buttons too small and hard to click
+- Technical info font size too small
+
 ## [0.15.1] - 2025-12-03
 
 ### Added

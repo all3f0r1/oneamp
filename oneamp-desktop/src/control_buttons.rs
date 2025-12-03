@@ -265,14 +265,14 @@ pub fn control_button_row(
     let mut action = ControlAction::None;
 
     ui.horizontal(|ui| {
-        ui.add_space(8.0);
+        ui.add_space(12.0);
 
         // Previous
-        if control_button(ui, theme, ButtonIcon::Previous, false, 40.0).clicked() {
+        if control_button(ui, theme, ButtonIcon::Previous, false, 60.0).clicked() {
             action = ControlAction::Previous;
         }
 
-        ui.add_space(4.0);
+        ui.add_space(8.0);
 
         // Play/Pause
         let play_pause_icon = if is_playing && !is_paused {
@@ -281,7 +281,7 @@ pub fn control_button_row(
             ButtonIcon::Play
         };
 
-        if control_button(ui, theme, play_pause_icon, is_playing, 48.0).clicked() {
+        if control_button(ui, theme, play_pause_icon, is_playing, 70.0).clicked() {
             action = if is_playing && !is_paused {
                 ControlAction::Pause
             } else {
@@ -289,21 +289,21 @@ pub fn control_button_row(
             };
         }
 
-        ui.add_space(4.0);
+        ui.add_space(8.0);
 
         // Stop
-        if control_button(ui, theme, ButtonIcon::Stop, false, 40.0).clicked() {
+        if control_button(ui, theme, ButtonIcon::Stop, false, 60.0).clicked() {
             action = ControlAction::Stop;
         }
 
-        ui.add_space(4.0);
+        ui.add_space(8.0);
 
         // Next
-        if control_button(ui, theme, ButtonIcon::Next, false, 40.0).clicked() {
+        if control_button(ui, theme, ButtonIcon::Next, false, 60.0).clicked() {
             action = ControlAction::Next;
         }
 
-        ui.add_space(8.0);
+        ui.add_space(12.0);
     });
 
     action

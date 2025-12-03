@@ -571,7 +571,7 @@ impl eframe::App for OneAmpApp {
                     &mut self.scroll_offset,
                 );
 
-                ui.add_space(8.0);
+                ui.add_space(16.0);
 
                 // PROGRESS BAR
                 if let Some(seek_pos) = ui_components::render_progress_bar(
@@ -585,7 +585,7 @@ impl eframe::App for OneAmpApp {
                     }
                 }
 
-                ui.add_space(8.0);
+                ui.add_space(16.0);
 
                 // CONTROL BUTTONS (new 3D buttons)
                 ui.horizontal(|ui| {

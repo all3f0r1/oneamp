@@ -19,7 +19,7 @@ pub fn render_player_section(
         egui::vec2(ui.available_width(), player_height),
         egui::Layout::top_down(egui::Align::Center),
         |ui| {
-            ui.add_space(10.0);
+            ui.add_space(16.0);
 
             // Timer display (large digital style)
             let timer_text = TrackDisplay::format_duration_digital(current_position);
@@ -30,7 +30,7 @@ pub fn render_player_section(
                     .monospace(),
             );
 
-            ui.add_space(8.0);
+            ui.add_space(12.0);
 
             // Track info (scrolling text)
             if let Some(track) = current_track {
@@ -48,13 +48,13 @@ pub fn render_player_section(
                 // Update scroll offset for animation
                 *scroll_offset = (*scroll_offset + 1) % (title.len() + 3).max(1);
 
-                ui.add_space(4.0);
+                ui.add_space(8.0);
 
                 // Technical info
                 let tech_info = TrackDisplay::get_technical_info(track);
                 ui.label(
                     egui::RichText::new(tech_info)
-                        .size(11.0)
+                        .size(14.0)
                         .color(Theme::color32(&theme.colors.display_text).linear_multiply(0.7)),
                 );
             } else {
@@ -65,7 +65,7 @@ pub fn render_player_section(
                 );
             }
 
-            ui.add_space(8.0);
+            ui.add_space(12.0);
 
             // Simple visualizer
             render_visualizer(ui, theme, visualizer_data);
@@ -172,7 +172,7 @@ pub fn render_progress_bar(
 
         let desired_width = ui.available_width() - 60.0;
         let (response, painter) = ui.allocate_painter(
-            egui::vec2(desired_width, 20.0),
+            egui::vec2(desired_width, 28.0),
             egui::Sense::click_and_drag(),
         );
 
