@@ -379,11 +379,22 @@ pub fn render_playlist(
                     let is_current = current_track_index == Some(idx);
                     let is_selected = selected_track_index == Some(idx);
 
+                    // Add visual indicators
+                    let prefix = if is_current {
+                        "▶ "
+                    } else if is_selected {
+                        "★ "
+                    } else {
+                        "  "
+                    };
+
                     let mut text =
-                        egui::RichText::new(display_text).size(theme.fonts.playlist_size);
+                        egui::RichText::new(format!("{}{}", prefix, display_text)).size(theme.fonts.playlist_size);
 
                     if is_current {
                         text = text.color(Theme::color32(&theme.colors.playlist_playing));
+                    } else if is_selected {
+                        text = text.color(Theme::color32(&theme.colors.playlist_selected));
                     }
 
                     let response = ui.selectable_label(is_selected, text);

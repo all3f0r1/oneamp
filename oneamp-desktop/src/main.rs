@@ -628,9 +628,9 @@ impl eframe::App for OneAmpApp {
 
                 // VISUALIZER TOGGLE
                 ui.horizontal(|ui| {
-                    ui.label("Visualizer:");
+                    ui.label(egui::RichText::new("📊 Visualizer:").size(14.0));
 
-                    if ui.selectable_label(!self.use_onedrop, "Spectrum").clicked() {
+                    if ui.selectable_label(!self.use_onedrop, "📈 Spectrum").clicked() {
                         self.use_onedrop = false;
                         if let Some(ref mut onedrop) = self.onedrop {
                             onedrop.set_enabled(false);
@@ -639,7 +639,7 @@ impl eframe::App for OneAmpApp {
 
                     // Skin selector button
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("🎨 Skins").clicked() {
+                        if ui.button(egui::RichText::new("🎨 Skins").size(14.0)).clicked() {
                             self.show_skin_selector = !self.show_skin_selector;
                         }
                     });
@@ -647,7 +647,7 @@ impl eframe::App for OneAmpApp {
                     let has_presets = self.onedrop.as_ref().map_or(false, |od| od.has_presets());
 
                     if has_presets {
-                        if ui.selectable_label(self.use_onedrop, "Milkdrop").clicked() {
+                        if ui.selectable_label(self.use_onedrop, "🎆 Milkdrop").clicked() {
                             self.use_onedrop = true;
                             if let Some(ref mut onedrop) = self.onedrop {
                                 onedrop.set_enabled(true);
@@ -659,7 +659,7 @@ impl eframe::App for OneAmpApp {
 
                             let mut action = None;
 
-                            if ui.button("◄").clicked() {
+                            if ui.button(egui::RichText::new("◄◄").size(16.0)).clicked() {
                                 action = Some("prev");
                             }
 
@@ -678,7 +678,7 @@ impl eframe::App for OneAmpApp {
                                 }
                             }
 
-                            if ui.button("►").clicked() {
+                            if ui.button(egui::RichText::new("►►").size(16.0)).clicked() {
                                 action = Some("next");
                             }
 
@@ -700,7 +700,7 @@ impl eframe::App for OneAmpApp {
                             ui.separator();
 
                             // Fullscreen toggle
-                            if ui.button("🕲 Fullscreen").clicked() {
+                            if ui.button(egui::RichText::new("⛶ Fullscreen").size(14.0)).clicked() {
                                 self.visualizer_fullscreen = !self.visualizer_fullscreen;
                             }
 
@@ -774,9 +774,9 @@ impl eframe::App for OneAmpApp {
 
                 // EQUALIZER SECTION (new advanced display)
                 ui.horizontal(|ui| {
-                    ui.heading("🎚 Equalizer");
+                    ui.heading(egui::RichText::new("🎺 Equalizer").size(16.0));
                     if ui
-                        .button(if self.show_equalizer { "▼" } else { "▶" })
+                        .button(egui::RichText::new(if self.show_equalizer { "▼" } else { "▶" }).size(14.0))
                         .clicked()
                     {
                         self.show_equalizer = !self.show_equalizer;
@@ -807,24 +807,24 @@ impl eframe::App for OneAmpApp {
 
                 // PLAYLIST SECTION
                 ui.horizontal(|ui| {
-                    ui.heading("🎵 Playlist");
+                    ui.heading(egui::RichText::new("🎵 Playlist").size(16.0));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("➕ Add Files").clicked() {
+                        if ui.button(egui::RichText::new("➕ Add Files").size(13.0)).clicked() {
                             self.add_files_to_playlist();
                         }
-                        if ui.button("📁 Add Folder").clicked() {
+                        if ui.button(egui::RichText::new("📁 Add Folder").size(13.0)).clicked() {
                             self.add_folder_to_playlist();
                         }
                         if ui
                             .add_enabled(
                                 self.selected_track_index.is_some(),
-                                egui::Button::new("➖ Remove"),
+                                egui::Button::new(egui::RichText::new("➖ Remove").size(13.0)),
                             )
                             .clicked()
                         {
                             self.remove_selected_track();
                         }
-                        if ui.button("🗑 Clear").clicked() {
+                        if ui.button(egui::RichText::new("🗑 Clear").size(13.0)).clicked() {
                             self.clear_playlist();
                         }
                     });

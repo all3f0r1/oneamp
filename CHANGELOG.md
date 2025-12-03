@@ -5,6 +5,33 @@ All notable changes to OneAmp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.3] - 2025-12-03
+
+### Added
+- Phase 5: Icons and Visibility improvements
+- Enhanced icon visibility with larger Unicode icons
+- Visual indicators for playlist items (▶ for current, ★ for selected)
+- Improved button labels with better sizing and spacing
+- Color-coded visual hierarchy for sections
+
+### Changed
+- Visualizer label: "Visualizer:" → "📊 Visualizer:"
+- Spectrum option: "Spectrum" → "📈 Spectrum"
+- Milkdrop option: "Milkdrop" → "🎆 Milkdrop"
+- Skins button: "🎨 Skins" with size 14.0
+- Equalizer heading: "🎺 Equalizer" with size 16.0
+- Playlist heading: "🎵 Playlist" with size 16.0
+- Preset navigation buttons: "◄" → "◄◄" (size 16.0), "►" → "►►" (size 16.0)
+- Fullscreen button: "🕲 Fullscreen" → "⛶ Fullscreen" (size 14.0)
+- All playlist buttons: Add Files, Add Folder, Remove, Clear (size 13.0)
+- Playlist items now show visual indicators (▶ or ★)
+
+### Fixed
+- Icon visibility issues with better sizing
+- Poor visual hierarchy in buttons
+- Playlist items lack visual distinction
+- Missing visual feedback for active/selected states
+
 ## [0.15.2] - 2025-12-03
 
 ### Added
