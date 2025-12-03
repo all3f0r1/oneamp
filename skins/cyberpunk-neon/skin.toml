@@ -1,0 +1,48 @@
+# Cyberpunk Neon Theme
+# A futuristic theme with vibrant neon colors inspired by cyberpunk aesthetics
+
+[metadata]
+name = "Cyberpunk Neon"
+author = "Manus AI"
+version = "1.0"
+description = "Futuristic neon theme inspired by cyberpunk aesthetics with vibrant colors"
+
+[colors]
+dark_mode = true
+
+# Main UI colors
+background = "#0a0e27"
+text = "#00ff88"
+window_fill = "#1a1f3a"
+window_stroke = "#ff00ff"
+panel_fill = "#0f1429"
+
+# Widget colors
+widget_bg = "#1a2540"
+widget_stroke = "#00ffff"
+hovered_widget_bg = "#2a3560"
+active_widget_bg = "#3a4580"
+inactive_widget_bg = "#0f1429"
+
+# Special colors
+accent = "#ff00ff"
+error = "#ff0055"
+warning = "#ffaa00"
+
+# Playlist specific
+playlist_current_track = "#00ff88"
+playlist_selected_bg = "#2a3560"
+
+[fonts]
+proportional = "Arial"
+monospace = "Courier New"
+
+[metrics]
+window_rounding = 2.0
+widget_rounding = 0.0
+scrollbar_width = 6.0
+window_padding = 6.0
+button_padding = [10.0, 3.0]
+body_text_size = 13.0
+heading_text_size = 16.0
+timer_text_size = 44.0

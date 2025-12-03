@@ -1,0 +1,48 @@
+# OneAmp Light Theme
+# A bright, modern theme for users who prefer light interfaces
+
+[metadata]
+name = "OneAmp Light"
+author = "Manus AI"
+version = "1.0"
+description = "Light theme for OneAmp with bright colors and high contrast"
+
+[colors]
+dark_mode = false
+
+# Main UI colors
+background = "#f5f5f5"
+text = "#000000"
+window_fill = "#ffffff"
+window_stroke = "#d0d0d0"
+panel_fill = "#eeeeee"
+
+# Widget colors
+widget_bg = "#e8e8e8"
+widget_stroke = "#cccccc"
+hovered_widget_bg = "#d8d8d8"
+active_widget_bg = "#c8c8c8"
+inactive_widget_bg = "#f0f0f0"
+
+# Special colors
+accent = "#0066cc"
+error = "#cc0000"
+warning = "#ff9900"
+
+# Playlist specific
+playlist_current_track = "#0066cc"
+playlist_selected_bg = "#d0d0d0"
+
+[fonts]
+proportional = "Arial"
+monospace = "Courier New"
+
+[metrics]
+window_rounding = 4.0
+widget_rounding = 2.0
+scrollbar_width = 8.0
+window_padding = 8.0
+button_padding = [12.0, 4.0]
+body_text_size = 14.0
+heading_text_size = 18.0
+timer_text_size = 48.0

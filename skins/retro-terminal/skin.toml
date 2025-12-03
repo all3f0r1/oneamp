@@ -1,0 +1,48 @@
+# Retro Terminal Theme
+# A vintage theme inspired by old computer terminals with green monochrome colors
+
+[metadata]
+name = "Retro Terminal"
+author = "Manus AI"
+version = "1.0"
+description = "Retro terminal theme with green monochrome colors inspired by vintage computers"
+
+[colors]
+dark_mode = true
+
+# Main UI colors
+background = "#001100"
+text = "#00ff00"
+window_fill = "#002200"
+window_stroke = "#00aa00"
+panel_fill = "#001100"
+
+# Widget colors
+widget_bg = "#003300"
+widget_stroke = "#00aa00"
+hovered_widget_bg = "#004400"
+active_widget_bg = "#005500"
+inactive_widget_bg = "#001100"
+
+# Special colors
+accent = "#00ff00"
+error = "#ff0000"
+warning = "#ffff00"
+
+# Playlist specific
+playlist_current_track = "#00ff00"
+playlist_selected_bg = "#003300"
+
+[fonts]
+proportional = "Courier New"
+monospace = "Courier New"
+
+[metrics]
+window_rounding = 0.0
+widget_rounding = 0.0
+scrollbar_width = 10.0
+window_padding = 4.0
+button_padding = [8.0, 2.0]
+body_text_size = 12.0
+heading_text_size = 14.0
+timer_text_size = 40.0
