@@ -5,6 +5,25 @@ All notable changes to OneAmp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2025-12-03
+
+### Added
+- **CI/CD Pipeline**: GitHub Actions for automated testing, linting, and releases
+- **5 Skins**: OneAmp Dark, Winamp5 Classified, OneAmp Light, Cyberpunk Neon, Retro Terminal
+- **Skin Selector**: UI to switch between skins in real-time
+- **Skin Persistence**: Saves active skin in config
+- **18+ Tests**: Comprehensive test suite for skin system
+- **Documentation**: Guides for creating custom skins and API reference
+
+### Changed
+- **Version Bump**: All packages updated to v0.14.1
+- **Code Quality**: All Clippy warnings fixed
+- **Formatting**: All code formatted with rustfmt
+
+### Fixed
+- **Compilation Errors**: Fixed 9+ compilation errors related to egui API changes
+- **Borrow Checker**: Fixed borrow checker issues in UI code
+
 ## [0.6.1] - 2024-11-24
 
 ### Changed
