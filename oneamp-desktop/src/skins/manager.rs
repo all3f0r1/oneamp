@@ -124,7 +124,7 @@ impl SkinManager {
             visuals.panel_fill = bg;
         }
         if let Ok(text) = parser::hex_to_color32(&skin.colors.text) {
-            visuals.text_color = text;
+            visuals.override_text_color = Some(text);
         }
         if let Ok(window_fill) = parser::hex_to_color32(&skin.colors.window_fill) {
             visuals.window_fill = window_fill;

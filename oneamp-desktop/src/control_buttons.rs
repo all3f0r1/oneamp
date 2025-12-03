@@ -1,7 +1,5 @@
 use eframe::egui::{self, Color32, Painter, Pos2, Response, Sense, Shape, Stroke, Ui, Vec2};
-use crate::visual_effects::VisualEffects;
 use crate::theme::Theme;
-use std::f32::consts::PI;
 
 /// Button icons for media controls
 #[derive(Debug, Clone, Copy, PartialEq)]

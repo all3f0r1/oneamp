@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, Pos2, Rect, Response, Sense, Stroke, Ui, Vec2};
+use eframe::egui::{self, Color32, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use crate::visual_effects::VisualEffects;
 use crate::theme::Theme;
 

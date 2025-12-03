@@ -2,7 +2,7 @@
 // Provides UI components for selecting and managing skins.
 
 use super::SkinManager;
-use egui::{Button, RichText, Ui};
+use egui::{RichText, Ui};
 
 /// Renders a skin selector menu in the UI.
 /// 
@@ -25,20 +25,18 @@ pub fn skin_selector_menu(ui: &mut Ui, skin_manager: &mut SkinManager) -> bool {
                 RichText::new(&skin.metadata.name)
             };
 
-            if ui.selectable_label(is_active, label) {
+            if ui.selectable_label(is_active, label).clicked() {
                 if skin_manager.set_active_skin(index) {
                     skin_changed = true;
                 }
             }
 
             // Show tooltip with skin description
-            if ui.is_rect_visible(ui.last_rect()) {
-                ui.label(
-                    RichText::new(&skin.metadata.description)
-                        .small()
-                        .color(egui::Color32::GRAY),
-                );
-            }
+            ui.label(
+                RichText::new(&skin.metadata.description)
+                    .small()
+                    .color(egui::Color32::GRAY),
+            );
         }
     });
 
@@ -125,8 +123,11 @@ pub fn skin_selector_dialog(
                 ui.label("Available Skins:");
                 ui.separator();
 
-                for (index, skin) in skin_manager.available_skins.iter().enumerate() {
-                    let is_active = index == skin_manager.active_skin_index;
+                let skins_to_display: Vec<_> = skin_manager.available_skins.iter().enumerate().collect();
+                let active_index = skin_manager.active_skin_index;
+
+                for (index, skin) in skins_to_display {
+                    let is_active = index == active_index;
 
                     ui.group(|ui| {
                         ui.vertical(|ui| {

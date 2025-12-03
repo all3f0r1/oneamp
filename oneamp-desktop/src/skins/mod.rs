@@ -6,7 +6,6 @@ pub mod parser;
 pub mod ui;
 
 pub use manager::SkinManager;
-pub use parser::{Skin, Metadata, Colors, Fonts, Metrics};
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
