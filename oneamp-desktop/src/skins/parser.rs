@@ -1,7 +1,7 @@
 // Skin TOML Parser
 // Responsible for loading and validating skin.toml files.
 
-use super::{Colors, Fonts, Metadata, Metrics, Skin};
+use super::Skin;
 use anyhow::{anyhow, Result};
 use std::fs;
 use std::path::Path;

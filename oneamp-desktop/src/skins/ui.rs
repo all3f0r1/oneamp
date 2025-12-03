@@ -13,16 +13,30 @@ use egui::{RichText, Ui};
 /// # Returns
 /// `true` if a skin was selected, `false` otherwise
 pub fn skin_selector_menu(ui: &mut Ui, skin_manager: &mut SkinManager) -> bool {
+    // Collect skin data before the menu to avoid borrow checker issues
+    let skins_data: Vec<_> = skin_manager
+        .available_skins
+        .iter()
+        .enumerate()
+        .map(|(index, skin)| {
+            let is_active = index == skin_manager.active_skin_index;
+            (
+                index,
+                skin.metadata.name.clone(),
+                skin.metadata.description.clone(),
+                is_active,
+            )
+        })
+        .collect();
+
     let mut skin_changed = false;
 
     ui.menu_button("🎨 Skins", |ui| {
-        for (index, skin) in skin_manager.available_skins.iter().enumerate() {
-            let is_active = index == skin_manager.active_skin_index;
+        for (index, name, description, is_active) in skins_data {
             let label = if is_active {
-                RichText::new(format!("✓ {}", skin.metadata.name))
-                    .color(egui::Color32::from_rgb(0, 212, 255))
+                RichText::new(format!("✓ {}", name)).color(egui::Color32::from_rgb(0, 212, 255))
             } else {
-                RichText::new(&skin.metadata.name)
+                RichText::new(&name)
             };
 
             if ui.selectable_label(is_active, label).clicked() {
@@ -33,7 +47,7 @@ pub fn skin_selector_menu(ui: &mut Ui, skin_manager: &mut SkinManager) -> bool {
 
             // Show tooltip with skin description
             ui.label(
-                RichText::new(&skin.metadata.description)
+                RichText::new(&description)
                     .small()
                     .color(egui::Color32::GRAY),
             );
@@ -114,6 +128,22 @@ pub fn skin_selector_dialog(
     let mut skin_changed = false;
 
     if *show_dialog {
+        // Collect skin data before the window to avoid borrow checker issues
+        let skins_data: Vec<_> = skin_manager
+            .available_skins
+            .iter()
+            .enumerate()
+            .map(|(index, skin)| {
+                (
+                    index,
+                    skin.metadata.name.clone(),
+                    skin.metadata.description.clone(),
+                    skin.metadata.author.clone(),
+                    index == skin_manager.active_skin_index,
+                )
+            })
+            .collect();
+
         egui::Window::new("Select Skin")
             .open(show_dialog)
             .resizable(true)
@@ -122,31 +152,25 @@ pub fn skin_selector_dialog(
                 ui.label("Available Skins:");
                 ui.separator();
 
-                let skins_to_display: Vec<_> =
-                    skin_manager.available_skins.iter().enumerate().collect();
-                let active_index = skin_manager.active_skin_index;
-
-                for (index, skin) in skins_to_display {
-                    let is_active = index == active_index;
-
+                for (index, name, description, author, is_active) in skins_data {
                     ui.group(|ui| {
                         ui.vertical(|ui| {
                             let label = if is_active {
-                                RichText::new(&skin.metadata.name)
+                                RichText::new(&name)
                                     .strong()
                                     .color(egui::Color32::from_rgb(0, 212, 255))
                             } else {
-                                RichText::new(&skin.metadata.name).strong()
+                                RichText::new(&name).strong()
                             };
 
                             ui.label(label);
                             ui.label(
-                                RichText::new(&skin.metadata.description)
+                                RichText::new(&description)
                                     .small()
                                     .color(egui::Color32::GRAY),
                             );
                             ui.label(
-                                RichText::new(format!("by {}", skin.metadata.author))
+                                RichText::new(format!("by {}", author))
                                     .small()
                                     .color(egui::Color32::DARK_GRAY),
                             );

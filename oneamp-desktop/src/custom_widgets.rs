@@ -283,7 +283,7 @@ pub fn metallic_panel(ui: &mut Ui, theme: &Theme, content: impl FnOnce(&mut Ui))
     }
 
     let inner_rect = rect.shrink(8.0);
-    ui.allocate_ui_at_rect(inner_rect, content);
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(inner_rect), content);
 }
 
 #[cfg(test)]

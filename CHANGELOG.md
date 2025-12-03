@@ -5,6 +5,26 @@ All notable changes to OneAmp will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.7] - 2025-12-03
+
+### Fixed
+- **Unused Imports**: Removed unused imports (Colors, Fonts, Metadata, Metrics) from parser.rs
+- **Type Mismatch**: Fixed skin selector dialog call in main.rs (ctx vs ui parameter)
+- **Borrow Checker**: Fixed immutable/mutable borrow conflicts in skin selector UI
+- **Deprecated API**: Replaced deprecated allocate_ui_at_rect with allocate_new_ui
+- **Compilation Errors**: All 3 compilation errors resolved
+- **Warnings**: Reduced warnings from 3 to 0
+
+### Changed
+- **Skin Selector**: Refactored to collect skin data before UI rendering
+- **UI Components**: Updated to use current egui API (allocate_new_ui)
+- **Code Quality**: Improved borrow checker compliance
+
+### Technical
+- Skin data now cloned before menu/window rendering to avoid borrow conflicts
+- Window wrapper added for skin selector dialog in main.rs
+- UiBuilder used for proper rect allocation
+
 ## [0.14.6] - 2025-12-03
 
 ### Added

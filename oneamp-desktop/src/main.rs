@@ -534,11 +534,17 @@ impl eframe::App for OneAmpApp {
         // Show skin selector dialog
         if self.show_skin_selector {
             let mut config = AppConfig::load().0;
-            let skin_changed = skins::ui::skin_selector_dialog(
-                ctx,
-                &mut self.skin_manager,
-                &mut self.show_skin_selector,
-            );
+            let skin_changed = egui::Window::new("Skin Selector")
+                .open(&mut self.show_skin_selector)
+                .show(ctx, |ui| {
+                    skins::ui::skin_selector_dialog(
+                        ui,
+                        &mut self.skin_manager,
+                        &mut self.show_skin_selector,
+                    )
+                })
+                .and_then(|r| r.inner)
+                .unwrap_or(false);
 
             if skin_changed {
                 // Save the new skin selection
@@ -891,8 +897,11 @@ impl eframe::App for OneAmpApp {
                 }
 
                 // Close button overlay
-                ui.allocate_ui_at_rect(
-                    egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(150.0, 30.0)),
+                ui.allocate_new_ui(
+                    egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
+                        egui::pos2(10.0, 10.0),
+                        egui::vec2(150.0, 30.0),
+                    )),
                     |ui| {
                         if ui.button("✕ Close Fullscreen").clicked() {
                             self.visualizer_fullscreen = false;

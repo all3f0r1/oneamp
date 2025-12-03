@@ -7,7 +7,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.14.6"
+version = "0.14.7"
 edition = "2021"
 authors = ["Manus AI"]
 license = "MIT"
