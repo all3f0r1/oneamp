@@ -1,6 +1,6 @@
 name: CI
 
-# Runs on every push/PR to master. release.yml runs the same fmt/clippy/test
+# Runs on every push/PR to main. release.yml runs the same fmt/clippy/test
 # gates on tag pushes (before the build/publish jobs) so contributors get
 # fast feedback here without waiting for a tag.
 #
@@ -11,9 +11,9 @@ name: CI
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
-    branches: [master]
+    branches: [main]
 
 env:
   CARGO_TERM_COLOR: always
