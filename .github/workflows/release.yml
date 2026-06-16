@@ -171,6 +171,7 @@ jobs:
           cp target/release/oneamp oneamp-${{ github.ref_name }}-linux-x86_64/
           cp README.md oneamp-${{ github.ref_name }}-linux-x86_64/
           cp CHANGELOG.md oneamp-${{ github.ref_name }}-linux-x86_64/
+          cp LICENSE-MIT LICENSE-APACHE oneamp-${{ github.ref_name }}-linux-x86_64/
           tar czf oneamp-${{ github.ref_name }}-linux-x86_64.tar.gz oneamp-${{ github.ref_name }}-linux-x86_64/
 
       - name: Build .deb package
@@ -238,6 +239,8 @@ jobs:
           Copy-Item target\release\oneamp.exe $stage\
           Copy-Item README.md $stage\
           Copy-Item CHANGELOG.md $stage\
+          Copy-Item LICENSE-MIT $stage\
+          Copy-Item LICENSE-APACHE $stage\
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
 
       # MSI installer: WiX 3 template at packaging/windows/main.wxs,
@@ -249,7 +252,12 @@ jobs:
       - name: Install WiX Toolset 3
         shell: pwsh
         run: |
-          choco install wixtoolset --no-progress -y
+          # Pin WiX 3.11.2: choco's current default (3.14) ships a
+          # reorganized WixUIExtension that double-defines the
+          # WixUI_FeatureTree dialog set under cargo-wix 0.3, failing
+          # `light` with LGHT0091 "Duplicate symbol WixUI_FeatureTree".
+          # 3.11.2 is the last release cargo-wix 0.3 links cleanly against.
+          choco install wixtoolset --version 3.11.2 --no-progress -y
           # choco installs to a versioned directory; surface the bin
           # path so cargo-wix's candle/light shellouts resolve.
           $wixBin = Get-ChildItem "C:\Program Files (x86)" -Directory -Filter "WiX Toolset v3.*" |

@@ -82,7 +82,7 @@ appstream-util validate-relax --nonet \
   %{buildroot}%{_datadir}/metainfo/%{appid}.metainfo.xml
 
 %files
-%license LICENSE
+%license LICENSE-MIT LICENSE-APACHE
 %doc README.md CHANGELOG.md
 %{_bindir}/oneamp
 %{_datadir}/applications/%{appid}.desktop

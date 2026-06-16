@@ -76,7 +76,8 @@ cp "$SCRIPT_DIR/icons/oneamp-512.png" "$DEB_DIR/usr/share/icons/hicolor/512x512/
 # Copy documentation
 echo "Copying documentation..."
 cp "$PROJECT_ROOT/README.md" "$DEB_DIR/usr/share/doc/$PACKAGE_NAME/"
-cp "$PROJECT_ROOT/LICENSE" "$DEB_DIR/usr/share/doc/$PACKAGE_NAME/"
+cp "$PROJECT_ROOT/LICENSE-MIT" "$DEB_DIR/usr/share/doc/$PACKAGE_NAME/"
+cp "$PROJECT_ROOT/LICENSE-APACHE" "$DEB_DIR/usr/share/doc/$PACKAGE_NAME/"
 
 # Get installed size
 INSTALLED_SIZE=$(du -sk "$DEB_DIR" | cut -f1)
