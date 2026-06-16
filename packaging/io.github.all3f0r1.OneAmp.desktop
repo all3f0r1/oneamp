@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=OneAmp
+GenericName=Audio Player
+Comment=Pixel-perfect Winamp 2.x in Rust — plays your music, looks good doing it
+Exec=oneamp %F
+Icon=io.github.all3f0r1.OneAmp
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+MimeType=audio/mpeg;audio/mp3;audio/flac;audio/x-flac;audio/ogg;audio/x-vorbis+ogg;audio/wav;audio/x-wav;audio/aac;audio/aacp;audio/mp4;audio/m4a;audio/x-m4a;
+Keywords=music;audio;player;mp3;flac;aac;m4a;ogg;wav;winamp;skin;wsz;equalizer;radio;
+StartupNotify=true

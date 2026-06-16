@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Info.plist template. `build-mac-app.sh` substitutes @VERSION@ at
+  build time. Keep keys minimal — anything we don't need (Document
+  Types, URL Schemes, …) bloats Launch Services indexing for no gain.
+
+  CFBundleIdentifier must match the freedesktop AppStream ID
+  (`io.github.all3f0r1.OneAmp`) so a future xdg-portal-style cross-OS
+  manifest stays consistent.
+-->
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>OneAmp</string>
+    <key>CFBundleDisplayName</key>
+    <string>OneAmp</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.all3f0r1.OneAmp</string>
+    <key>CFBundleVersion</key>
+    <string>@VERSION@</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@VERSION@</string>
+    <key>CFBundleExecutable</key>
+    <string>oneamp</string>
+    <key>CFBundleIconFile</key>
+    <string>OneAmp</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <!-- macOS 11 (Big Sur) is the lowest version that ships an arm64
+         system Python / system tools we rely on indirectly. Older
+         macOS lacks the AVFoundation entitlements souvlaki uses for
+         MediaRemote anyway. -->
+    <key>LSMinimumSystemVersion</key>
+    <string>11.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <!-- We never record audio, only play it. Declaring no microphone
+         usage description means the OS will deny any inadvertent
+         capture API call — defence in depth. -->
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.music</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Released under the MIT License.</string>
+</dict>
+</plist>

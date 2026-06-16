@@ -1,0 +1,60 @@
+[package]
+name = "oneamp-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "OneAmp core audio engine library"
+
+[lib]
+name = "oneamp_core"
+path = "src/lib.rs"
+
+# Documentation settings
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--enable-index-page", "-Z", "unstable-options"]
+
+[dependencies]
+# Audio decoding
+symphonia.workspace = true
+
+# Audio playback (optional, required for audio output)
+rodio = { workspace = true, optional = true }
+
+# Error handling
+anyhow.workspace = true
+
+# Channels for thread communication
+crossbeam-channel.workspace = true
+
+# WSZ skin support
+zip.workspace = true
+image.workspace = true
+
+# Tag editing (read + write)
+lofty.workspace = true
+
+# HTTP client for internet-radio + podcast streaming
+ureq.workspace = true
+
+# FFT for spectrum visualization
+rustfft.workspace = true
+
+# Lock-free SPSC ring for the rodio output hot path
+ringbuf.workspace = true
+
+# Wait-free Arc swap for spectrum / waveform publication
+arc-swap.workspace = true
+
+# Serialization for presets and configuration
+serde = { workspace = true, features = ["derive"], optional = true }
+serde_json = { workspace = true, optional = true }
+
+[features]
+default = ["audio", "serialization"]
+# Audio feature: enables audio playback and ALSA support
+# Disable this for documentation builds or minimal builds
+audio = ["rodio"]
+# Serialization feature for presets and configuration
+serialization = ["serde", "serde_json"]

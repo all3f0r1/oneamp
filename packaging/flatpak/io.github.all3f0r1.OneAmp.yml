@@ -1,0 +1,55 @@
+app-id: io.github.all3f0r1.OneAmp
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: oneamp
+
+finish-args:
+  # Window system
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+
+  # Audio output (PulseAudio / PipeWire-Pulse compatibility socket)
+  - --socket=pulseaudio
+
+  # File access goes through the FileChooser portal (rfd handles this
+  # transparently); we deliberately do NOT grant blanket --filesystem=home.
+  # Users wanting library scanning can opt in via Flatseal.
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/oneamp/cargo
+  build-args:
+    # OneDrop visualizer is currently fetched from git by Cargo, so the
+    # build needs network. This manifest is intentionally not Flathub-ready:
+    # publishing there would require pre-vendoring all crates + git deps
+    # (e.g. via flatpak-cargo-generator.py).
+    - --share=network
+
+modules:
+  - name: oneamp
+    buildsystem: simple
+    build-commands:
+      - cargo build --release --locked
+
+      - install -Dm0755 target/release/oneamp /app/bin/oneamp
+
+      - install -Dm0644 packaging/io.github.all3f0r1.OneAmp.desktop
+          /app/share/applications/io.github.all3f0r1.OneAmp.desktop
+
+      - install -Dm0644 packaging/io.github.all3f0r1.OneAmp.metainfo.xml
+          /app/share/metainfo/io.github.all3f0r1.OneAmp.metainfo.xml
+
+      - |
+        for sz in 16 32 48 64 128 256 512; do
+          install -Dm0644 "packaging/icons/oneamp-${sz}.png" \
+            "/app/share/icons/hicolor/${sz}x${sz}/apps/io.github.all3f0r1.OneAmp.png"
+        done
+    sources:
+      - type: dir
+        path: ../..

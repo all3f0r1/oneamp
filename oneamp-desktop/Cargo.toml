@@ -1,0 +1,148 @@
+[package]
+name = "oneamp-desktop"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "OneAmp - Desktop GUI application"
+# `build.rs` scans the workspace `skins/` directory at compile time and
+# emits the BUNDLED_SKINS table. Dropping a new `.wsz` into `skins/`
+# triggers a rebuild and bundles it automatically — no source edits.
+build = "build.rs"
+
+[[bin]]
+name = "oneamp"
+path = "src/main.rs"
+
+[dependencies]
+# Core audio engine
+oneamp-core = { path = "../oneamp-core", features = ["audio", "serialization"] }
+
+# GUI framework
+eframe = { version = "0.30", features = ["wgpu"] }
+egui = "0.30"
+
+# Error handling
+anyhow.workspace = true
+
+# Lock-free Arc swap for visualizer buffers (audio thread publishes, UI
+# thread reads — never blocking the real-time producer)
+arc-swap.workspace = true
+
+# Cross-thread channel for the single-instance IPC listener
+crossbeam-channel.workspace = true
+
+# Cross-platform local socket / named pipe for the single-instance IPC
+# handoff. Unix domain socket on Linux / macOS, named pipe on Windows;
+# one API on top.
+interprocess = "2.2"
+
+# File / message dialogs. Default features include `xdg-portal` and
+# `wayland`, which is what we want on Linux: the file picker is routed
+# through `org.freedesktop.portal.FileChooser` so GNOME, KDE, Sway and
+# Flatpak sandboxes each get their *own* native chooser. Do NOT pass
+# `default-features = false` — without `xdg-portal` rfd falls back to
+# a bundled GTK chooser that looks foreign on KDE and breaks inside
+# Flatpak. Windows uses `IFileOpenDialog`, macOS uses `NSOpenPanel`.
+rfd = "0.17"
+
+# Configuration
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+dirs = "6.0"
+
+# Cross-platform desktop notifications. Linux: D-Bus
+# `org.freedesktop.Notifications`. macOS: NSUserNotification /
+# UNUserNotification. Windows: XML toast via WinRT.
+notify-rust = "4"
+
+# Native system-tray / status-bar icon. Tauri's `tray-icon` is the
+# maintained cross-platform crate: `Shell_NotifyIcon` (Win),
+# `NSStatusBar` (macOS), `StatusNotifierItem` via libappindicator on
+# Linux (requires a running GTK main loop — see
+# `platform::tray::install` for the dedicated GTK thread). We keep
+# the default `[libxdo, gtk]` feature set on so the Linux backend
+# actually compiles; macOS / Windows builds ignore the gtk feature.
+#
+# Re-exports `muda` under `tray_icon::menu`, so the `MenuId` used for
+# tray menu items and the macOS app menu bar (see `platform::menu_bar`)
+# is the *same* type — one combined `HashMap<MenuId, MenuCommand>`
+# can dispatch clicks from either subsystem.
+#
+# `default-features = false` drops `libxdo` — that feature pulls a
+# native dependency (`libxdo-dev`) just to fake X11 keyboard events
+# for muda's menu-bar accelerators. We don't use accelerators on the
+# tray menu (it only opens on right-click) and the macOS menu bar's
+# accelerators are handled by AppKit, not muda, so libxdo is dead
+# weight that breaks Linux builds without the dev header. We keep
+# `gtk` so the Linux StatusNotifierItem backend still compiles.
+tray-icon = { version = "0.24", default-features = false, features = ["gtk"] }
+
+# Startup update check — sync HTTP client against
+# api.github.com/repos/all3f0r1/oneamp/releases/latest. ureq with
+# default features uses rustls + webpki-roots so the build stays free
+# of system OpenSSL on macOS / Windows.
+ureq.workspace = true
+# Semver comparison for `tag_name` vs CARGO_PKG_VERSION. Pre-release
+# tags (`v0.22.0-rc1`) sort correctly under semver rules.
+semver = "1"
+
+# Cross-platform media controls — exposes OneAmp on each OS's media
+# bus so physical multimedia keys, the GNOME / KDE / macOS Now Playing
+# / Windows SMTC widget, and the lock screen drive playback.
+# souvlaki spawns its own blocking event thread; we cross-thread events
+# back over a crossbeam channel.
+#
+# Split by OS so Linux pins `use_dbus` (zbus has been flaky for us on
+# certain distros — see commit e94e23e history); macOS / Windows use
+# default features which select the native backend by cfg.
+[target.'cfg(target_os = "linux")'.dependencies]
+souvlaki = { version = "0.7", default-features = false, features = ["use_dbus"] }
+
+# GTK is required by `tray-icon`'s Linux backend (`libappindicator`
+# rides on a GTK main loop). We init it on a dedicated thread inside
+# `platform::tray::install` — eframe stays on winit on the main thread,
+# the tray gets its own GTK runtime alongside it. Requires the
+# `libgtk-3-dev` / `libayatana-appindicator3-dev` system packages at
+# build time, documented in the README's Linux build section.
+gtk = "0.18"
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+souvlaki = "0.7"
+
+# Win32 HWND extraction for souvlaki's SMTC backend. eframe already
+# pulls raw-window-handle transitively; we name it explicitly so the
+# Windows-only branch of `platform::media_controls` compiles.
+[target.'cfg(target_os = "windows")'.dependencies]
+raw-window-handle = "0.6"
+
+# Native macOS menu bar in the system menu strip at the top of the
+# screen (HIG-mandatory on macOS). Tauri's `muda` is the maintained
+# crate for this; we pin to its macOS backend only with
+# `default-features = false` to skip the GTK / libxdo pulls that the
+# Linux backend would otherwise bring in. Win/Linux keep the
+# bare Winamp chrome — no menu bar there.
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { version = "0.19", default-features = false }
+
+# cargo-wix configuration. The WiX 3 source lives at
+# packaging/windows/main.wxs (outside the default `oneamp-desktop/wix/`
+# location so the cross-platform packaging tree stays in one place). It
+# is appended via `include` and consumed by `cargo wix` in the release
+# workflow with `--no-build`, since the upstream `cargo build --release`
+# step already produced the binary.
+#
+# `include` paths are resolved relative to the process CWD, which the CI
+# job sets to the workspace root.
+#
+# `WixUIExtension` must be passed to both candle (so it knows about
+# `WixUI_FeatureTree`) and light (so it actually links the dialog set).
+[package.metadata.wix]
+name = "OneAmp"
+product-name = "OneAmp"
+include = ["packaging/windows/main.wxs"]
+no-build = true
+eula = false
+license = false
+compiler-args = ["-ext", "WixUIExtension"]
+linker-args = ["-ext", "WixUIExtension"]

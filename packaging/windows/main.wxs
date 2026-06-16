@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="windows-1252"?>
+<!--
+  WiX 3 source for the OneAmp MSI. Built in CI by `cargo wix` after the
+  release binary lands at `target/release/oneamp.exe`. The UpgradeCode
+  GUID below is permanent — never change it, otherwise existing
+  installations stop being recognized as the same product and upgrades
+  turn into "OneAmp" + "OneAmp (1)" side-by-side. The Product Id is
+  re-generated per build (`*`) so MajorUpgrade triggers cleanly.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="OneAmp"
+    UpgradeCode="A47116CB-E1F9-4B1A-A1C6-5BC6A48BA7E7"
+    Manufacturer="all3f0r1"
+    Language="1033"
+    Codepage="1252"
+    Version="$(var.Version)">
+
+    <Package
+      Id="*"
+      Keywords="Installer"
+      Description="OneAmp — pixel-perfect Winamp 2.x in Rust. Plays your music, looks good doing it."
+      Manufacturer="all3f0r1"
+      InstallerVersion="450"
+      Languages="1033"
+      Compressed="yes"
+      InstallScope="perMachine"
+      SummaryCodepage="1252"/>
+
+    <!--
+      Block side-by-side installs and silently uninstall any earlier
+      versioned MSI before laying down the new one. AllowSameVersionUpgrades
+      is on so re-running the same-version installer overwrites in place
+      (useful for re-installs after the binary gets quarantined).
+    -->
+    <MajorUpgrade
+      Schedule="afterInstallInitialize"
+      AllowSameVersionUpgrades="yes"
+      DowngradeErrorMessage="A newer version of OneAmp is already installed. Uninstall it first to install this older build."/>
+
+    <Media Id="1" Cabinet="oneamp.cab" EmbedCab="yes"/>
+
+    <!-- Application icon registered with Add/Remove Programs. cargo-wix
+         runs candle.exe with the workspace root as CWD, so SourceFile
+         paths are resolved against the repo root rather than this WXS
+         file's directory. -->
+    <Icon Id="oneamp.ico" SourceFile="packaging\windows\oneamp.ico"/>
+    <Property Id="ARPPRODUCTICON" Value="oneamp.ico"/>
+    <Property Id="ARPHELPLINK" Value="https://github.com/all3f0r1/oneamp"/>
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/all3f0r1/oneamp"/>
+
+    <!--
+      Per-machine install layout:
+        C:\Program Files\OneAmp\oneamp.exe
+        Start Menu\OneAmp\OneAmp.lnk
+        Desktop\OneAmp.lnk   (optional, enabled by default)
+    -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="APPLICATIONFOLDER" Name="OneAmp">
+          <Component Id="MainExecutable" Guid="3B6F8C2C-1B5D-4B6C-9A0E-FA0C0C9BCF11" Win64="yes">
+            <File
+              Id="oneampEXE"
+              Name="oneamp.exe"
+              Source="$(var.CargoTargetBinDir)\oneamp.exe"
+              KeyPath="yes">
+              <Shortcut
+                Id="StartMenuShortcut"
+                Directory="ApplicationProgramsFolder"
+                Name="OneAmp"
+                WorkingDirectory="APPLICATIONFOLDER"
+                Icon="oneamp.ico"
+                IconIndex="0"
+                Advertise="yes"/>
+            </File>
+          </Component>
+          <Component Id="DesktopShortcutComponent" Guid="6E2C1F2A-3D44-4B61-8D2E-9F4A1F1F5B1A" Win64="yes">
+            <Shortcut
+              Id="DesktopShortcut"
+              Directory="DesktopFolder"
+              Name="OneAmp"
+              Target="[#oneampEXE]"
+              WorkingDirectory="APPLICATIONFOLDER"
+              Icon="oneamp.ico"
+              IconIndex="0"/>
+            <RegistryValue
+              Root="HKCU"
+              Key="Software\OneAmp"
+              Name="desktopShortcut"
+              Type="integer"
+              Value="1"
+              KeyPath="yes"/>
+          </Component>
+        </Directory>
+      </Directory>
+
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="OneAmp">
+          <Component Id="StartMenuFolderRegistration" Guid="C8E33D78-8B0F-4C1E-9B9F-AB4FBD2E6E61">
+            <RemoveFolder Id="RemoveApplicationProgramsFolder" On="uninstall"/>
+            <RegistryValue
+              Root="HKCU"
+              Key="Software\OneAmp"
+              Name="startMenuFolder"
+              Type="integer"
+              Value="1"
+              KeyPath="yes"/>
+          </Component>
+        </Directory>
+      </Directory>
+
+      <Directory Id="DesktopFolder" Name="Desktop"/>
+    </Directory>
+
+    <Feature
+      Id="MainProgram"
+      Title="OneAmp"
+      Description="Core application files."
+      Level="1"
+      ConfigurableDirectory="APPLICATIONFOLDER"
+      AllowAdvertise="no"
+      Display="expand"
+      Absent="disallow">
+      <ComponentRef Id="MainExecutable"/>
+      <ComponentRef Id="StartMenuFolderRegistration"/>
+
+      <Feature
+        Id="DesktopShortcut"
+        Title="Desktop shortcut"
+        Description="Adds a OneAmp icon on the desktop."
+        Level="1"
+        AllowAdvertise="no">
+        <ComponentRef Id="DesktopShortcutComponent"/>
+      </Feature>
+    </Feature>
+
+    <!--
+      Standard WiX UI: licence agreement step is skipped (MIT-licensed,
+      no EULA dialog needed), but the install-dir picker and progress
+      pages still show. WixUI_FeatureTree lets users untick the
+      "Desktop shortcut" sub-feature.
+    -->
+    <UI>
+      <UIRef Id="WixUI_FeatureTree"/>
+      <!--
+        Skip the LicenseAgreementDlg: OneAmp is MIT-licensed and we don't
+        want to ship a RTF EULA inside the installer (no need to pretend
+        users are agreeing to a contract). These two Publish overrides
+        re-route the dialog flow Welcome → Customize → Verify, matching
+        the pattern cargo-wix's own template uses when `eula = false`.
+      -->
+      <Publish Dialog="WelcomeDlg" Control="Next" Event="NewDialog" Value="CustomizeDlg" Order="99">1</Publish>
+      <Publish Dialog="CustomizeDlg" Control="Back" Event="NewDialog" Value="WelcomeDlg" Order="99">1</Publish>
+    </UI>
+    <Property Id="WIXUI_INSTALLDIR" Value="APPLICATIONFOLDER"/>
+  </Product>
+</Wix>

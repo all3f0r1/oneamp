@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.all3f0r1.OneAmp</id>
+
+  <name>OneAmp</name>
+  <summary>Pixel-perfect Winamp 2.x in Rust — plays your music, looks good doing it</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+
+  <developer id="io.github.all3f0r1">
+    <name>OneAmp Project</name>
+  </developer>
+
+  <description>
+    <p>
+      OneAmp is a native audio player in Rust, faithful to Winamp 2.x —
+      your .wsz skins render pixel-perfect, your local library plays,
+      internet radio streams, and the whole thing stays out of your way.
+    </p>
+    <p>
+      It is deliberately not a media library, not a CD ripper, not an
+      iPod sync tool, not a podcast subscription manager. It's a music
+      player. It plays music. It looks good doing it.
+    </p>
+    <p>What's in the box:</p>
+    <ul>
+      <li>Symphonia decoding: MP3, FLAC, OGG Vorbis, WAV, AAC, M4A / MP4, ALAC</li>
+      <li>Native pixel-perfect Winamp 2.x .wsz skin rendering, hot-swappable via Alt+S</li>
+      <li>10-band RBJ-biquad equalizer at ISO 266 octave centres (±20 dB, constant-Q, click-free coefficient ramping) with 16 built-in presets and .eqf import / export</li>
+      <li>Per-preset auto-preamp so heavy presets (Bass Boost, Hip-Hop, Club, Metal) never trip the brickwall limiter</li>
+      <li>Internet radio and podcasts over HTTP / HTTPS (Ctrl+L or playlist → Add URL…), with live ICY now-playing metadata bridged to the playlist row and desktop notifications</li>
+      <li>Built-in tag editor on the playlist right-click menu: ID3v1/v2, Vorbis Comments, MP4 atoms, RIFF, APE — preserves cover art, ReplayGain, MusicBrainz IDs on every edit</li>
+      <li>Customisable playlist row template ({artist}, {title}, {album}, {tracknumber}, {year}, {duration}, {filename}) with automatic separator collapse on missing tags</li>
+      <li>Gapless transitions and equal-power crossfade between same-format tracks (preloaded decoder swapped in-place)</li>
+      <li>ReplayGain track-level gain normalization and Fletcher-Munson loudness compensation, both opt-in via the Options menu</li>
+      <li>Pre-buffer brickwall limiter (-1 dBFS) and constant-power stereo balance</li>
+      <li>Spectrum analyzer (2048-point Hann FFT, dB-correct), oscilloscope (zero-crossing trigger, min/max decimation), and peak/RMS meter visualizers</li>
+      <li>M3U / PLS playlist load/save, drag-and-drop ingest of files and folders, recursive folder walk</li>
+      <li>MPRIS2 D-Bus integration (works with playerctl, GNOME / KDE media widgets, the lock screen, physical multimedia keys)</li>
+      <li>Per-track desktop notifications, sleep timer, always-on-top, single-instance handoff</li>
+      <li>Output device picker, "Open URL…" location box (Winamp Ctrl+L parity), recent files</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">io.github.all3f0r1.OneAmp.desktop</launchable>
+
+  <url type="homepage">https://github.com/all3f0r1/oneamp</url>
+  <url type="bugtracker">https://github.com/all3f0r1/oneamp/issues</url>
+  <url type="vcs-browser">https://github.com/all3f0r1/oneamp</url>
+
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Player</category>
+  </categories>
+
+  <provides>
+    <binary>oneamp</binary>
+  </provides>
+
+  <content_rating type="oars-1.1" />
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>Main player with equalizer and playlist</caption>
+      <image>https://raw.githubusercontent.com/all3f0r1/oneamp/master/docs/screenshot-main.png</image>
+    </screenshot>
+  </screenshots>
+
+  <releases>
+    <release version="1.2.0" date="2026-05-20">
+      <description>
+        <p>Library breadth release: AAC / M4A / MP4 / ALAC playback (symphonia features `aac` + `isomp4` + `alac` — royalty-free codecs, no system OpenSSL). HTTP / HTTPS internet-radio + podcast streaming via Ctrl+L or the new playlist right-click "Add URL…" entry — backed by a custom symphonia MediaSource over ureq + rustls. ICY metadata (Shoutcast / Icecast `StreamTitle`) is stripped from the byte stream and bridged to the playlist row + desktop notifications in real time. New tag editor: right-click any playlist row → "Edit tags…" opens a modal for title / artist / album / album-artist / genre / year / track # / comment, writing back in place via lofty (ID3v1/v2, Vorbis, MP4 atoms, RIFF, APE — preserves cover art, ReplayGain, MusicBrainz IDs). Playlist rows now use a fully customisable display template (default `{artist} - {title}`, Winamp/iTunes convention) with `{artist}`, `{title}`, `{album}`, `{genre}`, `{tracknumber}`, `{year}`, `{duration}`, `{filename}` tokens; missing tags collapse separators automatically and the template is editable in-app via the new "Edit display format…" dialog.</p>
+      </description>
+    </release>
+    <release version="1.1.0" date="2026-05-19">
+      <description>
+        <p>Audio engine overhaul: 21-objective rewrite driven by an expert audio review. New features: loudness compensation (Fletcher-Munson volume-dependent shelves, opt-in via Options menu), peak/RMS meter visualizer alongside the spectrum and oscilloscope, per-preset preamp values that keep aggressive presets (Bass Boost, Hip-Hop, Club) from constantly tripping the limiter. Audible changes: constant-Q gain-dependent EQ (heavy boosts now stay focused on their target band instead of smearing two octaves), constant-power stereo balance (no more 3 dB center hump), coefficient smoothing on every EQ slider drag, revised preset curves with documented audio rationale (notably Vocal Boost which now targets 1-4 kHz instead of mud-inducing 250 Hz). Spectrum analyzer is now dB-correct (2048-point FFT, DC removal, max-of-bin grouping, coverage to ~21 kHz); oscilloscope gets a zero-crossing trigger and min/max decimation for stable phase-aligned display. Engine internals: lock-free SPSC ring on the rodio output hot path (no more priority inversion on the cpal callback), ArcSwap visualization snapshots replacing the unbounded event channel, recv_timeout-based idle parking (audio thread no longer busy-waits at 1 kHz), PTS-aligned position estimate (no drift on glitchy MP3s).</p>
+      </description>
+    </release>
+    <release version="0.19.2" date="2026-05-13">
+      <description>
+        <p>Fix title scroller text rendering on base-2.91: lowercase letters no longer disappear, the period no longer renders as an ellipsis, and the *** loop separator now renders correctly. Refresh the app icon (speaker + green lightning bolt).</p>
+      </description>
+    </release>
+    <release version="0.19.1" date="2026-05-13">
+      <description>
+        <p>Fix "Open with OneAmp" from the file manager (the .desktop Exec line was missing %F and main.rs had no argv parsing) and add single-instance handoff via a Unix socket so a second invocation appends to the running window instead of spawning a duplicate.</p>
+      </description>
+    </release>
+    <release version="0.19.0" date="2026-05-13">
+      <description>
+        <p>Codebase polish: dropped unused cpal backend and plugin scaffold, purged dead AudioCommand/AudioEvent variants, switched the visualizer buffers to lock-free arc-swap, added a push/PR CI workflow, and split the 1300-line window files by responsibility. Plus Winamp-parity follow-ups: full-slider EQ track guides, soft-focus-only main titlebar, and submenu bevel alignment.</p>
+      </description>
+    </release>
+    <release version="0.18.0" date="2026-05-12">
+      <description>
+        <p>Winamp-parity polish: correct EQ band-fill colors, working transport-button press feedback, soft-focus titlebars, visible preamp track guide, and a presets dropdown that no longer clips or sticks open.</p>
+      </description>
+    </release>
+    <release version="0.17.1" date="2026-05-08">
+      <description>
+        <p>Fixes the playlist crash on Wayland (wl_surface Invalid min/max size) and the AppImage startup panic in wgpu-hal's GLES init.</p>
+      </description>
+    </release>
+    <release version="0.16.2" date="2026-05-06">
+      <description>
+        <p>Production polish pass: pre-amp routing, .eqf preset save/load, options menu, always-on-top, focus-aware title bar, equal-power crossfade, audio-init-failed strip, multi-select playlist with SEL/MISC submenus.</p>
+      </description>
+    </release>
+    <release version="0.16.1" date="2026-05-06">
+      <description>
+        <p>Distribution: tarball, .deb, and AppImage now produced on every tagged release.</p>
+      </description>
+    </release>
+    <release version="0.16.0" date="2026-05-01">
+      <description>
+        <p>Pixel-perfect WSZ skin rendering for the equalizer and playlist windows. Embedded TTF fonts, EqEx/Mb/Avs/Gen atlases, full pledit.txt theming.</p>
+      </description>
+    </release>
+  </releases>
+</component>

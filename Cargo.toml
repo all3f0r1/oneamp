@@ -1,0 +1,107 @@
+[workspace]
+members = [
+    "oneamp-cli",
+    "oneamp-core",
+    "oneamp-desktop",
+]
+resolver = "3"
+
+[workspace.package]
+version = "1.0.0"
+edition = "2024"
+authors = ["all3f0r1"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# Audio decoding. `aac` enables the AAC LC decoder; `isomp4` brings the
+# MP4 demuxer so .m4a/.m4b/.mp4/AAC-in-MP4 (and Apple's iTunes lineup)
+# loads. `alac` rounds out Apple Lossless. `ogg` was implicit before
+# (default feature) — listing it explicitly so the feature set is
+# auditable. AAC is royalty-free since 2017, so shipping the codec in
+# the binary is fine.
+#
+# `adts` (raw .aac files / shoutcast AAC streams) isn't a feature of
+# symphonia 0.5; for now those streams degrade to the MP4-in-MP3
+# fallback Symphonia chooses by content sniffing.
+symphonia = { version = "0.5", features = [
+    "mp3",
+    "flac",
+    "vorbis",
+    "wav",
+    "pcm",
+    "ogg",
+    "aac",
+    "isomp4",
+    "alac",
+] }
+
+# Audio playback
+rodio = "0.21"
+
+# Error handling
+anyhow = "1.0"
+
+# Channels
+crossbeam-channel = "0.5"
+
+# WSZ skin support
+zip = "2.2"
+image = "0.25"
+
+# Tag editing (read + write) across the formats Symphonia decodes. lofty
+# covers ID3v1/v2, Vorbis Comments, MP4 atoms, RIFF (WAV) and APE in
+# pure Rust — same surface as the playback codecs, so the tag editor
+# doesn't introduce a divergent format list.
+lofty = "0.24"
+
+# HTTP client for internet-radio / podcast streaming. Pure-Rust TLS
+# (rustls + webpki-roots) keeps the binary free of system OpenSSL on
+# macOS / Windows. Same crate the update checker uses.
+ureq = "3"
+
+# FFT for spectrum visualization
+rustfft = "6"
+
+# Lock-free SPSC ring for the rodio output hot path (cpal callback never
+# blocks on a mutex). Producer = audio engine thread, consumer = cpal
+# real-time callback.
+ringbuf = "0.5"
+
+# Wait-free Arc swap for sharing spectrum / waveform snapshots between
+# the audio engine and any UI consumer.
+arc-swap = "1.7"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Fork of egui adding `PlatformOutput::cursor_image` + matching
+# egui-winit/eframe wiring so we can hand winit a real `CustomCursor`
+# instead of painting the WSZ sprite inside the egui canvas (which gets
+# clipped at the window edge). Branch `oneamp-custom-cursor` is forked
+# off the 0.30.0 tag and lives at github.com/all3f0r1/egui. Cargo locks
+# the exact commit in Cargo.lock so the build stays reproducible.
+#
+# Drop this `[patch.crates-io]` once upstream merges the equivalent of
+# `ctx.set_cursor_image(...)` (PR branch at
+# github.com/all3f0r1/egui:pr/custom-cursor-image).
+[patch.crates-io]
+egui       = { git = "https://github.com/all3f0r1/egui", branch = "oneamp-custom-cursor" }
+egui-winit = { git = "https://github.com/all3f0r1/egui", branch = "oneamp-custom-cursor" }
+egui-wgpu  = { git = "https://github.com/all3f0r1/egui", branch = "oneamp-custom-cursor" }
+eframe     = { git = "https://github.com/all3f0r1/egui", branch = "oneamp-custom-cursor" }
+epaint     = { git = "https://github.com/all3f0r1/egui", branch = "oneamp-custom-cursor" }
+ecolor     = { git = "https://github.com/all3f0r1/egui", branch = "oneamp-custom-cursor" }
+emath      = { git = "https://github.com/all3f0r1/egui", branch = "oneamp-custom-cursor" }
+
+[profile.release]
+opt-level = 3          # Maximum optimization
+lto = "thin"           # Link-Time Optimization (thin for reasonable compile time)
+codegen-units = 1      # Better optimization across crates
+strip = true           # Strip symbols automatically
+panic = "abort"        # Smaller binary, no unwinding
+
+[profile.release-with-debug]
+inherits = "release"
+strip = false
+debug = true

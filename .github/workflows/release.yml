@@ -1,0 +1,569 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+# Required by softprops/action-gh-release to publish releases under the
+# default GITHUB_TOKEN. Modern repos default to read-only and need this
+# explicit grant.
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libasound2-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev
+
+      - name: Configure pkg-config for ALSA
+        run: |
+          export PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> $GITHUB_ENV
+
+      - name: Run tests
+        run: cargo test --verbose --all
+
+      - name: Run doc tests
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+        run: cargo test --doc --verbose --all
+
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libasound2-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev
+
+      - name: Configure pkg-config for ALSA
+        run: |
+          export PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> $GITHUB_ENV
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run clippy
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+        run: cargo clippy --all --all-targets --all-features -- -D warnings
+
+  build-linux:
+    name: Build Linux x86_64
+    runs-on: ubuntu-latest
+    needs: [test, fmt, clippy]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libasound2-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxkbcommon-dev libwayland-dev libgtk-3-dev libayatana-appindicator3-dev
+
+      - name: Configure pkg-config for ALSA
+        run: |
+          export PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> $GITHUB_ENV
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+        run: cargo build --release --verbose
+      
+      - name: Strip binary
+        run: strip target/release/oneamp
+
+      - name: Create archive
+        run: |
+          mkdir -p oneamp-${{ github.ref_name }}-linux-x86_64
+          cp target/release/oneamp oneamp-${{ github.ref_name }}-linux-x86_64/
+          cp README.md oneamp-${{ github.ref_name }}-linux-x86_64/
+          cp CHANGELOG.md oneamp-${{ github.ref_name }}-linux-x86_64/
+          tar czf oneamp-${{ github.ref_name }}-linux-x86_64.tar.gz oneamp-${{ github.ref_name }}-linux-x86_64/
+
+      - name: Build .deb package
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
+        run: |
+          bash packaging/build-deb.sh
+          # Surface the produced .deb at a stable, version-agnostic path so the
+          # release upload step can reference it without parsing Cargo.toml.
+          cp packaging/oneamp_*_amd64.deb oneamp-${{ github.ref_name }}-linux-x86_64.deb
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            oneamp-${{ github.ref_name }}-linux-x86_64.tar.gz
+            oneamp-${{ github.ref_name }}-linux-x86_64.deb
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows:
+    name: Build Windows x86_64
+    runs-on: windows-latest
+    needs: [test, fmt, clippy]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release
+        run: cargo build --release -p oneamp-desktop
+
+      # Portable ZIP: the binary plus user-facing docs. Default skin is
+      # already embedded via `include_bytes!`, so no extra assets need
+      # to ship alongside the .exe. No code signing → SmartScreen will
+      # warn on first launch; users right-click → Properties → Unblock
+      # or run via "More info → Run anyway" in the warning dialog.
+      - name: Stage portable ZIP
+        shell: pwsh
+        run: |
+          $stage = "oneamp-${{ github.ref_name }}-windows-x86_64"
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item target\release\oneamp.exe $stage\
+          Copy-Item README.md $stage\
+          Copy-Item CHANGELOG.md $stage\
+          Compress-Archive -Path $stage -DestinationPath "$stage.zip"
+
+      # MSI installer: WiX 3 template at packaging/windows/main.wxs,
+      # driven by cargo-wix. Per-machine install to Program Files with
+      # Start Menu + Desktop shortcuts and proper MajorUpgrade so future
+      # tags overwrite the previous install in place. UpgradeCode in the
+      # WXS is permanent — see comments there. Unsigned: SmartScreen
+      # will still warn until we have an EV cert (Phase 3.2).
+      - name: Install WiX Toolset 3
+        shell: pwsh
+        run: |
+          choco install wixtoolset --no-progress -y
+          # choco installs to a versioned directory; surface the bin
+          # path so cargo-wix's candle/light shellouts resolve.
+          $wixBin = Get-ChildItem "C:\Program Files (x86)" -Directory -Filter "WiX Toolset v3.*" |
+            Select-Object -First 1 |
+            ForEach-Object { Join-Path $_.FullName "bin" }
+          Add-Content -Path $env:GITHUB_PATH -Value $wixBin
+
+      - name: Install cargo-wix
+        run: cargo install cargo-wix --locked --version "^0.3"
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          # --no-build: the previous step already produced
+          # target\release\oneamp.exe, no need to rebuild.
+          # --nocapture: surface candle/light output for CI diagnostics.
+          cargo wix --package oneamp-desktop --no-build --nocapture
+          # cargo-wix names the output <product-name>-<version>-x64.msi
+          # under target/wix/. Surface it at a tag-named path so the
+          # release upload step doesn't need to parse Cargo.toml.
+          $msi = Get-ChildItem target\wix\*.msi | Select-Object -First 1
+          if (-not $msi) { throw "No .msi produced by cargo-wix" }
+          Copy-Item $msi.FullName "oneamp-${{ github.ref_name }}-windows-x86_64.msi"
+
+      - name: Append Windows ZIP + MSI to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            oneamp-${{ github.ref_name }}-windows-x86_64.zip
+            oneamp-${{ github.ref_name }}-windows-x86_64.msi
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-macos:
+    name: Build macOS universal
+    runs-on: macos-latest
+    needs: [test, fmt, clippy]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # macos-latest is Apple Silicon by default; the x86_64 target
+          # is needed for the lipo step that fuses the universal binary.
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Read workspace version
+        id: version
+        run: |
+          VERSION="$(awk '/^\[workspace\.package\]/{f=1; next} f && /^version[[:space:]]*=/{gsub(/[" ]/,"",$3); print $3; exit}' Cargo.toml)"
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build .app + .dmg
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          bash packaging/build-mac-app.sh
+          # Surface the produced .dmg at a tag-named path so the upload
+          # step doesn't need to parse Cargo.toml.
+          cp "packaging/OneAmp-${VERSION}-mac-universal.dmg" \
+             "oneamp-${{ github.ref_name }}-mac-universal.dmg"
+
+      - name: Append macOS DMG to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: oneamp-${{ github.ref_name }}-mac-universal.dmg
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-rpm:
+    name: Build RPM (Fedora)
+    runs-on: ubuntu-latest
+    needs: [test, fmt, clippy, build-linux]
+    container: fedora:41
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build deps
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            rust cargo gcc pkgconfig alsa-lib-devel libxkbcommon-devel \
+            wayland-devel dbus-devel rpm-build rpmdevtools desktop-file-utils \
+            libappstream-glib git tar rsync findutils
+
+      - name: Read workspace version
+        id: version
+        run: |
+          VERSION="$(awk '/^\[workspace\.package\]/{f=1; next} f && /^version[[:space:]]*=/{gsub(/[" ]/,"",$3); print $3; exit}' Cargo.toml)"
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build RPM
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          rpmdev-setuptree
+
+          # Stage source as oneamp-<version>/ tarball expected by %setup
+          TARBALL_DIR="oneamp-${VERSION}"
+          rsync -a \
+            --exclude=target --exclude=.git --exclude=AppDir \
+            --exclude='*.AppImage' --exclude='*.deb' --exclude='*.rpm' \
+            --exclude=node_modules \
+            ./ "/tmp/${TARBALL_DIR}/"
+          tar czf "${HOME}/rpmbuild/SOURCES/${TARBALL_DIR}.tar.gz" \
+            -C /tmp "${TARBALL_DIR}"
+
+          cp packaging/oneamp.spec "${HOME}/rpmbuild/SPECS/"
+          rpmbuild -bb "${HOME}/rpmbuild/SPECS/oneamp.spec" \
+            --define "_version ${VERSION}"
+
+          # Surface the produced .rpm at a stable name for the release upload
+          RPM_PATH="$(find "${HOME}/rpmbuild/RPMS" -name 'oneamp-*.rpm' -print -quit)"
+          cp "${RPM_PATH}" "oneamp-${{ github.ref_name }}-x86_64.rpm"
+
+      - name: Append RPM to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: oneamp-${{ github.ref_name }}-x86_64.rpm
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-snap:
+    name: Build Snap
+    runs-on: ubuntu-latest
+    needs: [test, fmt, clippy, build-linux]
+    steps:
+      - uses: actions/checkout@v5
+
+      # snapcore/action-build spins up an LXD-based build container,
+      # invokes snapcraft against `snap/snapcraft.yaml`, and surfaces
+      # the produced `.snap` path via `steps.<id>.outputs.snap`.
+      - name: Build snap
+        id: snapcraft
+        uses: snapcore/action-build@v1
+
+      - name: Rename artifact to release-friendly name
+        run: |
+          cp "${{ steps.snapcraft.outputs.snap }}" \
+             "oneamp-${{ github.ref_name }}-amd64.snap"
+
+      # No store push: that needs `SNAPCRAFT_LOGIN` credentials + a
+      # registered name on snapcraft.io. Users install manually with
+      # `sudo snap install --dangerous oneamp-vX.Y.Z-amd64.snap`
+      # until the store account lands (Phase 3.2).
+      - name: Append Snap to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: oneamp-${{ github.ref_name }}-amd64.snap
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-flatpak:
+    name: Build Flatpak
+    runs-on: ubuntu-latest
+    needs: [test, fmt, clippy, build-linux]
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:freedesktop-24.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: OneAmp-${{ github.ref_name }}-x86_64.flatpak
+          manifest-path: packaging/flatpak/io.github.all3f0r1.OneAmp.yml
+          cache-key: flatpak-builder-${{ hashFiles('packaging/flatpak/io.github.all3f0r1.OneAmp.yml') }}
+          # OneDrop dep is fetched from git at build time — needs network on.
+          run-tests: false
+
+      - name: Append Flatpak to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: OneAmp-${{ github.ref_name }}-x86_64.flatpak
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  create-release-notes:
+    name: Create Release Notes
+    runs-on: ubuntu-latest
+    needs:
+      - build-linux
+      - build-windows
+      - build-macos
+      - build-rpm
+      - build-snap
+      - build-flatpak
+    # Run as long as build-linux made the release, even if a sibling
+    # build fails — otherwise an upstream skip swallows the install
+    # instructions entirely. Windows / macOS regressions are common
+    # while the cross-platform plumbing matures; don't gate Linux ops
+    # on them.
+    if: ${{ always() && needs.build-linux.result == 'success' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Create release summary
+        env:
+          V: ${{ steps.version.outputs.VERSION }}
+        run: |
+          cat > RELEASE_NOTES.md <<EOF
+          # OneAmp ${V}
+
+          ## Downloads
+
+          ### Linux
+          - **Tarball (any distro):** oneamp-${V}-linux-x86_64.tar.gz
+          - **Debian / Ubuntu / Mint:** oneamp-${V}-linux-x86_64.deb
+          - **Fedora / openSUSE:** oneamp-${V}-x86_64.rpm
+          - **Flatpak (any distro):** OneAmp-${V}-x86_64.flatpak
+          - **Snap (any distro with snapd):** oneamp-${V}-amd64.snap
+          - **Arch:** see [packaging/arch/README.md](packaging/arch/README.md) — \`makepkg -si\` from source.
+
+          ### Windows
+          - **MSI installer (recommended):** oneamp-${V}-windows-x86_64.msi
+          - **Portable ZIP:** oneamp-${V}-windows-x86_64.zip
+
+          ### macOS
+          - **Universal DMG (Intel + Apple Silicon):** oneamp-${V}-mac-universal.dmg
+
+          ## Installation
+
+          **Tarball:**
+          \`\`\`bash
+          tar xzf oneamp-${V}-linux-x86_64.tar.gz
+          cd oneamp-${V}-linux-x86_64
+          ./oneamp
+          \`\`\`
+
+          **Debian / Ubuntu / Mint:**
+          \`\`\`bash
+          sudo apt install ./oneamp-${V}-linux-x86_64.deb
+          \`\`\`
+
+          **Fedora / openSUSE:**
+          \`\`\`bash
+          sudo dnf install ./oneamp-${V}-x86_64.rpm   # or 'zypper install'
+          \`\`\`
+
+          **Flatpak (single-file bundle):**
+          \`\`\`bash
+          flatpak install --user OneAmp-${V}-x86_64.flatpak
+          flatpak run io.github.all3f0r1.OneAmp
+          \`\`\`
+
+          **Snap (manual install — not on the Snap Store yet):**
+          \`\`\`bash
+          sudo snap install --dangerous ./oneamp-${V}-amd64.snap
+          oneamp
+          \`\`\`
+
+          **Windows (MSI installer):**
+          Double-click the \`.msi\`, accept the UAC prompt, and follow
+          the wizard. Installs to \`C:\Program Files\OneAmp\`, adds a
+          Start Menu entry and (optionally) a desktop shortcut. Upgrades
+          over a previous OneAmp install in place. The build is unsigned,
+          so SmartScreen will warn on first launch — click
+          \`More info → Run anyway\`.
+
+          **Windows (portable ZIP):**
+          Unzip anywhere and run \`oneamp.exe\`. Same SmartScreen caveat
+          as above; right-click \`oneamp.exe → Properties → Unblock\` if
+          Windows quarantines the file.
+
+          **macOS:**
+          Open the DMG, drag \`OneAmp.app\` to /Applications. The
+          build is unsigned and unnotarised; on first launch right-
+          click \`OneAmp.app → Open\`, then \`Open\` in the Gatekeeper
+          dialog. Subsequent launches use the standard double-click.
+
+          ## What's New
+
+          See [CHANGELOG.md](CHANGELOG.md) for detailed changes.
+          EOF
+
+      - name: Attach notes to release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE_NOTES.md
+          append_body: false
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

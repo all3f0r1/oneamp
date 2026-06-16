@@ -1,0 +1,84 @@
+# Maintainer: OneAmp Team <oneamp@example.com>
+#
+# Source-based AUR recipe for OneAmp. Build with `makepkg -si` from
+# this directory; that fetches the GitHub release tarball, vendors
+# the Cargo registry under $srcdir, then runs the workspace's release
+# profile and installs into /usr.
+#
+# Rolling release model: Arch users follow current; bumping `pkgver`
+# below + updating `sha256sums` is the only release step.
+
+pkgname=oneamp
+pkgver=0.21.0
+pkgrel=1
+pkgdesc="Pixel-perfect Winamp 2.x in Rust — native .wsz skins, 10-band EQ, internet radio, tag editor, gapless playback"
+arch=('x86_64')
+url="https://github.com/all3f0r1/oneamp"
+license=('MIT')
+depends=(
+    'alsa-lib'
+    'libxkbcommon'
+    'wayland'
+    'mesa'
+    'dbus'
+)
+makedepends=(
+    'cargo'
+    'rust'
+    'pkgconf'
+)
+# The tarball checksum is project policy: SKIP is acceptable for our
+# own released artifacts; AUR maintainers can pin a real hash later.
+source=("${pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+    cd "${pkgname}-${pkgver}"
+    # Locked offline build per Arch packaging guidelines — vendor the
+    # registry into $srcdir so subsequent build() runs don't touch the
+    # network.
+    export CARGO_HOME="${srcdir}/cargo-home"
+    cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
+}
+
+build() {
+    cd "${pkgname}-${pkgver}"
+    export CARGO_HOME="${srcdir}/cargo-home"
+    export RUSTUP_TOOLCHAIN=stable
+    # `--frozen` errors out if Cargo.lock would need to change, which
+    # is what we want for a reproducible package.
+    cargo build --frozen --release -p oneamp-desktop
+}
+
+check() {
+    cd "${pkgname}-${pkgver}"
+    export CARGO_HOME="${srcdir}/cargo-home"
+    # Lib-only — the workspace's `oneamp-desktop` is a bin with no
+    # tests, so `--lib --all` skips it and runs `oneamp-core`'s suite.
+    cargo test --frozen --release --lib --all
+}
+
+package() {
+    cd "${pkgname}-${pkgver}"
+    local app_id="io.github.all3f0r1.OneAmp"
+
+    install -Dm755 "target/release/oneamp" "${pkgdir}/usr/bin/oneamp"
+
+    install -Dm644 "packaging/${app_id}.desktop" \
+        "${pkgdir}/usr/share/applications/${app_id}.desktop"
+    install -Dm644 "packaging/${app_id}.metainfo.xml" \
+        "${pkgdir}/usr/share/metainfo/${app_id}.metainfo.xml"
+
+    local size
+    for size in 16 32 48 64 128 256 512; do
+        install -Dm644 "packaging/icons/oneamp-${size}.png" \
+            "${pkgdir}/usr/share/icons/hicolor/${size}x${size}/apps/${app_id}.png"
+    done
+
+    install -Dm644 LICENSE \
+        "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+    install -Dm644 README.md \
+        "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+    install -Dm644 CHANGELOG.md \
+        "${pkgdir}/usr/share/doc/${pkgname}/CHANGELOG.md"
+}

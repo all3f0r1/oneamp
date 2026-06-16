@@ -1,0 +1,25 @@
+# cargo-audit configuration. The ignored advisories below are all
+# `unmaintained` / `unsound` informational warnings (no patched version
+# exists), triaged 2026-06-16. Each is a transitive dependency we cannot
+# currently drop. Real vulnerabilities are NOT ignored — they still fail
+# the audit. Revisit when the GTK3 → GTK4 app-indicator story matures.
+[advisories]
+ignore = [
+    # gtk-rs GTK3 bindings, unmaintained. Pulled in on Linux only via
+    # `gtk = "0.18"`, which `tray-icon`'s libappindicator backend needs
+    # for its GTK main loop. No GTK4 app-indicator path exists yet.
+    "RUSTSEC-2024-0413", # atk
+    "RUSTSEC-2024-0416", # atk-sys
+    "RUSTSEC-2024-0412", # gdk
+    "RUSTSEC-2024-0418", # gdk-sys
+    "RUSTSEC-2024-0415", # gtk
+    "RUSTSEC-2024-0420", # gtk-sys
+    "RUSTSEC-2024-0419", # gtk3-macros
+    "RUSTSEC-2024-0429", # glib VariantStrIter unsoundness (same GTK3 tree)
+
+    # Deep transitive build/util crates with no maintained successor wired
+    # up by our dependency graph. Informational only.
+    "RUSTSEC-2025-0119", # number_prefix unmaintained
+    "RUSTSEC-2024-0436", # paste unmaintained
+    "RUSTSEC-2024-0370", # proc-macro-error unmaintained
+]
