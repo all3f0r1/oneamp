@@ -258,13 +258,19 @@ jobs:
           # `light` with LGHT0091 "Duplicate symbol WixUI_FeatureTree".
           # 3.11.2 is the last release cargo-wix 0.3 links cleanly against.
           # windows-latest now preinstalls WiX 3.14, so choco needs
-          # --allow-downgrade or it refuses the older pin outright.
+          # --allow-downgrade or it refuses the older pin outright. This
+          # installs 3.11.2 alongside the preinstalled 3.14 rather than
+          # replacing it, so the directory filter below must target the
+          # 3.11 install specifically — a "v3.*" glob non-deterministically
+          # matched the preexisting v3.14 dir instead (NTFS enumeration
+          # order isn't alphabetical), silently resurrecting LGHT0091.
           choco install wixtoolset --version 3.11.2 --no-progress -y --allow-downgrade
           # choco installs to a versioned directory; surface the bin
           # path so cargo-wix's candle/light shellouts resolve.
-          $wixBin = Get-ChildItem "C:\Program Files (x86)" -Directory -Filter "WiX Toolset v3.*" |
+          $wixBin = Get-ChildItem "C:\Program Files (x86)" -Directory -Filter "WiX Toolset v3.11*" |
             Select-Object -First 1 |
             ForEach-Object { Join-Path $_.FullName "bin" }
+          if (-not $wixBin) { throw "WiX Toolset v3.11.x bin directory not found" }
           Add-Content -Path $env:GITHUB_PATH -Value $wixBin
 
       - name: Install cargo-wix
