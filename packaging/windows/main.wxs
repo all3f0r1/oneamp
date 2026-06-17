@@ -75,6 +75,16 @@
                 Advertise="yes"/>
             </File>
           </Component>
+          <!--
+            Non-advertised desktop shortcut targeting the exe directly.
+            The exe (oneampEXE) lives in MainExecutable / MainProgram,
+            while this component sits in the optional DesktopShortcut
+            sub-feature, so light's ICE69 flags the cross-feature Target
+            reference. It's a false positive — a child feature can't be
+            installed without its mandatory parent, so the exe is always
+            present. The release workflow suppresses it with
+            `light -sice:ICE69` (see .github/workflows/release.yml).
+          -->
           <Component Id="DesktopShortcutComponent" Guid="6E2C1F2A-3D44-4B61-8D2E-9F4A1F1F5B1A" Win64="yes">
             <Shortcut
               Id="DesktopShortcut"

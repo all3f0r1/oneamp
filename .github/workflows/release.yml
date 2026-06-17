@@ -290,7 +290,17 @@ jobs:
           # --no-build: the previous step already produced
           # target\release\oneamp.exe, no need to rebuild.
           # --nocapture: surface candle/light output for CI diagnostics.
-          cargo wix --package oneamp-desktop --no-build --nocapture
+          # --linker-arg=-sice:ICE69: the optional "Desktop shortcut"
+          # sub-feature holds a non-advertised shortcut whose Target is
+          # the exe ([#oneampEXE]), which lives in the MainExecutable
+          # component under the parent MainProgram feature. light's ICE69
+          # flags that cross-feature file reference as a potentially
+          # broken shortcut — but it's safe here: DesktopShortcut is a
+          # CHILD of MainProgram, and MSI never installs a child feature
+          # without its parent; MainProgram is also Absent="disallow"
+          # Level=1, so the exe is always present when the desktop
+          # shortcut is. Suppress the (false-positive) ICE so light exits 0.
+          cargo wix --package oneamp-desktop --no-build --nocapture --linker-arg=-sice:ICE69
           # cargo-wix names the output <product-name>-<version>-x64.msi
           # under target/wix/. Surface it at a tag-named path so the
           # release upload step doesn't need to parse Cargo.toml.
