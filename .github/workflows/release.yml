@@ -252,30 +252,34 @@ jobs:
       - name: Install WiX Toolset 3
         shell: pwsh
         run: |
-          # Pin WiX 3.11.2: choco's current default (3.14) ships a
-          # reorganized WixUIExtension that double-defines the
-          # WixUI_FeatureTree dialog set under cargo-wix 0.3, failing
-          # `light` with LGHT0091 "Duplicate symbol WixUI_FeatureTree".
-          # 3.11.2 is the last release cargo-wix 0.3 links cleanly against.
-          # windows-latest now preinstalls WiX 3.14, so choco needs
-          # --allow-downgrade or it refuses the older pin outright. This
-          # installs 3.11.2 alongside the preinstalled 3.14 rather than
-          # replacing it, so the directory filter below must target the
-          # 3.11 install specifically — a "v3.*" glob non-deterministically
-          # matched the preexisting v3.14 dir instead (NTFS enumeration
-          # order isn't alphabetical), silently resurrecting LGHT0091.
-          choco install wixtoolset --version 3.11.2 --no-progress -y --allow-downgrade
-          # choco installs to a versioned directory; surface the bin
-          # path so cargo-wix's candle/light shellouts resolve.
-          $wixDir = Get-ChildItem "C:\Program Files (x86)" -Directory -Filter "WiX Toolset v3.11*" |
-            Select-Object -First 1
-          if (-not $wixDir) { throw "WiX Toolset v3.11.x install directory not found" }
-          Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $wixDir.FullName "bin")
-          # cargo-wix's compiler/linker lookup prefers the WIX env var over
-          # PATH (see cargo-wix's `compiler()`/`linker()`), and the
-          # preinstalled 3.14 toolset already set WIX system-wide — so
-          # PATH alone never overrides it. Must override WIX itself too.
-          Add-Content -Path $env:GITHUB_ENV -Value "WIX=$($wixDir.FullName)"
+          # Pin WiX 3.11.2: choco's current default (3.14, also what
+          # windows-latest now preinstalls) ships a reorganized
+          # WixUIExtension that double-defines the WixUI_FeatureTree
+          # dialog set under cargo-wix 0.3, failing `light` with LGHT0091
+          # "Duplicate symbol WixUI_FeatureTree". 3.11.2 is the last
+          # release cargo-wix 0.3 links cleanly against.
+          #
+          # Tried `choco install wixtoolset --version 3.11.2
+          # --allow-downgrade` first: it reports success and sets the
+          # WIX env var to a "WiX Toolset v3.11" directory, but that
+          # directory's bin\ is empty in this environment — the legacy
+          # choco package's installer silently no-ops next to the
+          # preinstalled 3.14. Skip choco entirely and grab the official
+          # prebuilt binaries zip instead — no installer, no ambiguity.
+          # cargo-wix's compiler/linker lookup checks the WIX env var
+          # before PATH (see cargo-wix's `compiler()`/`linker()`, which
+          # appends `bin\` to WIX) — so extract straight into a `bin\`
+          # subfolder and point WIX at its parent.
+          $wixRoot = "C:\wix311"
+          $wixBin = "$wixRoot\bin"
+          Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix3/releases/download/wix3112rtm/wix311-binaries.zip" -OutFile "$env:TEMP\wix311-binaries.zip"
+          Expand-Archive -Path "$env:TEMP\wix311-binaries.zip" -DestinationPath $wixBin -Force
+          if (-not (Test-Path "$wixBin\candle.exe")) { throw "candle.exe not found after extracting wix311-binaries.zip" }
+          Add-Content -Path $env:GITHUB_PATH -Value $wixBin
+          # The preinstalled 3.14 toolset already sets WIX system-wide,
+          # so PATH alone never overrides cargo-wix's resolution — must
+          # override WIX itself too.
+          Add-Content -Path $env:GITHUB_ENV -Value "WIX=$wixRoot"
 
       - name: Install cargo-wix
         run: cargo install cargo-wix --locked --version "^0.3"
