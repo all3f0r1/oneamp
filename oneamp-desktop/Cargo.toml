@@ -135,8 +135,12 @@ muda = { version = "0.19", default-features = false }
 # `include` paths are resolved relative to the process CWD, which the CI
 # job sets to the workspace root.
 #
-# `WixUIExtension` must be passed to both candle (so it knows about
-# `WixUI_FeatureTree`) and light (so it actually links the dialog set).
+# `WixUIExtension` must be passed to candle so it knows about
+# `WixUI_FeatureTree`. Do NOT also pass it via linker-args: cargo-wix's
+# `light` invocation already adds `-ext WixUIExtension` unconditionally
+# (see cargo-wix's create.rs), so a duplicate linker-arg here loads the
+# extension's dialog library twice and `light` fails with LGHT0091
+# "Duplicate symbol WixUI_FeatureTree" / "Dialog:WelcomeDlg" etc.
 [package.metadata.wix]
 name = "OneAmp"
 product-name = "OneAmp"
@@ -145,4 +149,3 @@ no-build = true
 eula = false
 license = false
 compiler-args = ["-ext", "WixUIExtension"]
-linker-args = ["-ext", "WixUIExtension"]
