@@ -267,11 +267,15 @@ jobs:
           choco install wixtoolset --version 3.11.2 --no-progress -y --allow-downgrade
           # choco installs to a versioned directory; surface the bin
           # path so cargo-wix's candle/light shellouts resolve.
-          $wixBin = Get-ChildItem "C:\Program Files (x86)" -Directory -Filter "WiX Toolset v3.11*" |
-            Select-Object -First 1 |
-            ForEach-Object { Join-Path $_.FullName "bin" }
-          if (-not $wixBin) { throw "WiX Toolset v3.11.x bin directory not found" }
-          Add-Content -Path $env:GITHUB_PATH -Value $wixBin
+          $wixDir = Get-ChildItem "C:\Program Files (x86)" -Directory -Filter "WiX Toolset v3.11*" |
+            Select-Object -First 1
+          if (-not $wixDir) { throw "WiX Toolset v3.11.x install directory not found" }
+          Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $wixDir.FullName "bin")
+          # cargo-wix's compiler/linker lookup prefers the WIX env var over
+          # PATH (see cargo-wix's `compiler()`/`linker()`), and the
+          # preinstalled 3.14 toolset already set WIX system-wide — so
+          # PATH alone never overrides it. Must override WIX itself too.
+          Add-Content -Path $env:GITHUB_ENV -Value "WIX=$($wixDir.FullName)"
 
       - name: Install cargo-wix
         run: cargo install cargo-wix --locked --version "^0.3"
