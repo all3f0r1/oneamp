@@ -257,7 +257,9 @@ jobs:
           # WixUI_FeatureTree dialog set under cargo-wix 0.3, failing
           # `light` with LGHT0091 "Duplicate symbol WixUI_FeatureTree".
           # 3.11.2 is the last release cargo-wix 0.3 links cleanly against.
-          choco install wixtoolset --version 3.11.2 --no-progress -y
+          # windows-latest now preinstalls WiX 3.14, so choco needs
+          # --allow-downgrade or it refuses the older pin outright.
+          choco install wixtoolset --version 3.11.2 --no-progress -y --allow-downgrade
           # choco installs to a versioned directory; surface the bin
           # path so cargo-wix's candle/light shellouts resolve.
           $wixBin = Get-ChildItem "C:\Program Files (x86)" -Directory -Filter "WiX Toolset v3.*" |
@@ -360,10 +362,13 @@ jobs:
 
       - name: Install build deps
         run: |
+          # gtk3-devel is required by the `tray-icon` crate's Linux backend
+          # (gtk-sys links against glib-2.0/gtk+-3.0 via pkg-config); without
+          # it glib-sys fails to find glib-2.0.pc and the build aborts.
           dnf install -y --setopt=install_weak_deps=False \
             rust cargo gcc pkgconfig alsa-lib-devel libxkbcommon-devel \
-            wayland-devel dbus-devel rpm-build rpmdevtools desktop-file-utils \
-            libappstream-glib git tar rsync findutils
+            wayland-devel dbus-devel gtk3-devel rpm-build rpmdevtools \
+            desktop-file-utils libappstream-glib git tar rsync findutils
 
       - name: Read workspace version
         id: version

@@ -25,6 +25,9 @@ BuildRequires:  wayland-devel
 # `dbus-crossroads`) for the MPRIS player, and the dbus-rs build script
 # links libdbus-1 via pkg-config.
 BuildRequires:  dbus-devel
+# Pulls in glib2-devel, cairo-devel, gdk-pixbuf2-devel, pango-devel,
+# atk-devel transitively — needed by tray-icon's gtk-sys Linux backend.
+BuildRequires:  gtk3-devel
 BuildRequires:  desktop-file-utils
 BuildRequires:  libappstream-glib
 
@@ -34,7 +37,11 @@ Requires:       libwayland-client
 Requires:       mesa-libEGL
 Requires:       mesa-libGL
 Requires:       dbus-libs
+Requires:       gtk3
 Recommends:     pipewire-pulseaudio
+# Loaded via dlopen at runtime (see libappindicator-sys), not linked at
+# build time — soft dep so the tray icon degrades gracefully if absent.
+Recommends:     libayatana-appindicator-gtk3
 
 %description
 OneAmp is a native audio player in Rust, faithful to Winamp 2.x - your .wsz
