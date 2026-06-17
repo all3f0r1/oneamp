@@ -128,6 +128,14 @@ parts:
       curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
         | sh -s -- -y --default-toolchain stable --profile minimal
       source "$HOME/.cargo/env"
+      # The snapcraft LXD build container's network stack intermittently
+      # chokes on crates.io's HTTP/2, aborting the curl download with
+      # "[16] Error in the HTTP2 framing layer" (the build's most common
+      # flake). Disable cargo's HTTP/2 multiplexing so it falls back to
+      # HTTP/1.1, and fetch the egui git fork via the system git client,
+      # which is unaffected by the same framing bug.
+      export CARGO_HTTP_MULTIPLEXING=false
+      export CARGO_NET_GIT_FETCH_WITH_CLI=true
       cargo build --release -p oneamp-desktop --locked
       install -Dm755 target/release/oneamp \
         "${CRAFT_PART_INSTALL}/bin/oneamp"
