@@ -133,9 +133,12 @@ parts:
       # "[16] Error in the HTTP2 framing layer" (the build's most common
       # flake). Disable cargo's HTTP/2 multiplexing so it falls back to
       # HTTP/1.1, and fetch the egui git fork via the system git client,
-      # which is unaffected by the same framing bug.
+      # which is unaffected by the same framing bug. The framing error is
+      # transient, so also bump cargo's network retry count well above the
+      # default of 3 — a single re-fetch usually clears it.
       export CARGO_HTTP_MULTIPLEXING=false
       export CARGO_NET_GIT_FETCH_WITH_CLI=true
+      export CARGO_NET_RETRY=10
       cargo build --release -p oneamp-desktop --locked
       install -Dm755 target/release/oneamp \
         "${CRAFT_PART_INSTALL}/bin/oneamp"
