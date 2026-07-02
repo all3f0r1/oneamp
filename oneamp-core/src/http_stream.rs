@@ -416,7 +416,16 @@ impl HttpStream {
 /// is absent.
 fn parse_stream_title(payload: &str) -> Option<String> {
     let after = payload.split_once("StreamTitle='")?.1;
-    let title = after.split_once("';").map(|(s, _)| s).unwrap_or(after);
+    let title = match after.split_once("';") {
+        Some((s, _)) => s,
+        None => {
+            // Some encoders omit the trailing `;` but still close the
+            // quoted value with a bare `'` before the NUL padding — strip
+            // that closing quote so it doesn't leak into the title text.
+            let trimmed = after.trim_end_matches('\0');
+            trimmed.strip_suffix('\'').unwrap_or(trimmed)
+        }
+    };
     // The trailing zero-pad bytes lofty servers add show up as NUL
     // chars in the payload — trim them so the published title doesn't
     // carry invisible junk.
@@ -572,11 +581,24 @@ mod tests {
 
     #[test]
     fn parse_stream_title_handles_no_terminator() {
-        // Some encoders omit the trailing ';
+        // Some encoders omit the trailing `;` but still close the quoted
+        // value with a bare `'` — that closing quote must not leak into
+        // the parsed title.
         let payload = "StreamTitle='Just a title'\0\0";
         assert_eq!(
             parse_stream_title(payload),
-            Some("Just a title'".to_string())
+            Some("Just a title".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_stream_title_no_terminator_and_no_closing_quote() {
+        // Degenerate case: no `;` AND no closing `'` at all. Nothing to
+        // strip, so the raw (NUL-trimmed) remainder is used as-is.
+        let payload = "StreamTitle='Truncated mid title\0\0";
+        assert_eq!(
+            parse_stream_title(payload),
+            Some("Truncated mid title".to_string())
         );
     }
 

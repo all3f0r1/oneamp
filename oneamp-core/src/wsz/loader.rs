@@ -10,6 +10,35 @@ use std::io::{Cursor, Read};
 use std::path::Path;
 use zip::ZipArchive;
 
+/// Bounds against a hostile `.wsz` (skins are downloaded from the web, so
+/// treat the archive as untrusted input). A genuine Winamp skin has a
+/// couple dozen small BMPs/text files; these caps are generous multiples
+/// of that while still ruling out a zip-bomb-style blowup.
+const MAX_ZIP_ENTRIES: usize = 4096;
+const MAX_ENTRY_DECOMPRESSED_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB / file
+const MAX_TOTAL_DECOMPRESSED_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB / archive
+
+/// Read `file` fully, bounded by both a per-entry cap and a running
+/// archive-wide total — independent of whatever uncompressed size the ZIP's
+/// central directory *claims*, since that header is attacker-controlled.
+/// Reads one byte past the per-entry cap to detect an overrun without
+/// buffering the whole bomb first.
+fn read_bounded<R: Read>(file: &mut R, total_decompressed: &mut u64) -> Result<Vec<u8>> {
+    let remaining_total = MAX_TOTAL_DECOMPRESSED_BYTES.saturating_sub(*total_decompressed);
+    let cap = MAX_ENTRY_DECOMPRESSED_BYTES.min(remaining_total);
+    let mut buffer = Vec::new();
+    let read = file.take(cap + 1).read_to_end(&mut buffer)?;
+    if read as u64 > cap {
+        bail!(
+            "entry exceeds the {}-byte decompressed size limit (archive total cap {} MiB)",
+            cap,
+            MAX_TOTAL_DECOMPRESSED_BYTES / (1024 * 1024)
+        );
+    }
+    *total_decompressed += read as u64;
+    Ok(buffer)
+}
+
 pub struct WszLoader;
 
 impl WszLoader {
@@ -27,7 +56,16 @@ impl WszLoader {
     fn load_from_reader<R: Read + std::io::Seek>(reader: R) -> Result<WszSkin> {
         let mut archive = ZipArchive::new(reader).context("Failed to read ZIP archive")?;
 
+        if archive.len() > MAX_ZIP_ENTRIES {
+            bail!(
+                "WSZ archive has {} entries, exceeding the {} limit",
+                archive.len(),
+                MAX_ZIP_ENTRIES
+            );
+        }
+
         let mut skin = WszSkin::new();
+        let mut total_decompressed: u64 = 0;
 
         for i in 0..archive.len() {
             let mut file = archive
@@ -38,9 +76,13 @@ impl WszLoader {
             let filename_lower = filename.to_lowercase();
 
             if filename_lower.ends_with(".bmp") {
-                let mut buffer = Vec::new();
-                file.read_to_end(&mut buffer)
-                    .context(format!("Failed to read bitmap: {}", filename))?;
+                let buffer = match read_bounded(&mut file, &mut total_decompressed) {
+                    Ok(buffer) => buffer,
+                    Err(e) => {
+                        eprintln!("Warning: Skipping oversized bitmap {}: {}", filename, e);
+                        continue;
+                    }
+                };
 
                 if let Some(component) = SkinComponent::from_filename(&filename) {
                     match BitmapAtlas::from_bytes(&buffer) {
@@ -67,10 +109,10 @@ impl WszLoader {
                     }
                 }
             } else if filename_lower == "region.txt" {
-                let mut content = String::new();
-                file.read_to_string(&mut content)
-                    .context("Failed to read region.txt")?;
-
+                let Ok(buffer) = read_bounded(&mut file, &mut total_decompressed) else {
+                    continue;
+                };
+                let content = String::from_utf8_lossy(&buffer);
                 match parse_region_file(&content) {
                     Ok(regions) => skin.regions = regions,
                     Err(e) => {
@@ -78,14 +120,15 @@ impl WszLoader {
                     }
                 }
             } else if filename_lower == "viscolor.txt" {
-                let mut content = String::new();
-                file.read_to_string(&mut content)
-                    .context("Failed to read viscolor.txt")?;
-                skin.vis_colors = parse_viscolor(&content);
+                let Ok(buffer) = read_bounded(&mut file, &mut total_decompressed) else {
+                    continue;
+                };
+                skin.vis_colors = parse_viscolor(&String::from_utf8_lossy(&buffer));
             } else if filename_lower == "pledit.txt" {
-                let mut content = String::new();
-                file.read_to_string(&mut content)
-                    .context("Failed to read pledit.txt")?;
+                let Ok(buffer) = read_bounded(&mut file, &mut total_decompressed) else {
+                    continue;
+                };
+                let content = String::from_utf8_lossy(&buffer);
                 match parse_pledit(&content) {
                     Ok(theme) => skin.pledit = theme,
                     Err(e) => {
@@ -93,18 +136,17 @@ impl WszLoader {
                     }
                 }
             } else if filename_lower == "readme.txt" || filename_lower == "read_me.txt" {
-                let mut content = String::new();
-                file.read_to_string(&mut content).ok();
-                skin.metadata.readme = Some(content);
+                if let Ok(buffer) = read_bounded(&mut file, &mut total_decompressed) {
+                    skin.metadata.readme = Some(String::from_utf8_lossy(&buffer).into_owned());
+                }
             } else if filename_lower.ends_with(".cur") || filename_lower.ends_with(".ani") {
                 let stem = filename.rsplit('/').next().unwrap_or(filename.as_str());
                 let Some(kind) = kind_from_filename(stem) else {
                     continue;
                 };
-                let mut buffer = Vec::new();
-                if file.read_to_end(&mut buffer).is_err() {
+                let Ok(buffer) = read_bounded(&mut file, &mut total_decompressed) else {
                     continue;
-                }
+                };
                 // `.ani` is a RIFF wrapper around `.cur`/`.ico` frames. We
                 // don't animate; we decode the FIRST frame so the cursor
                 // shows something instead of nothing. If the container is
@@ -129,8 +171,9 @@ impl WszLoader {
                 // pledit.txt spec, this font is meant for the playlist
                 // editor and minibrowser. We hand the raw bytes to the
                 // renderer; egui will register them as a custom family.
-                let mut buffer = Vec::new();
-                if file.read_to_end(&mut buffer).is_ok() && !buffer.is_empty() {
+                if let Ok(buffer) = read_bounded(&mut file, &mut total_decompressed)
+                    && !buffer.is_empty()
+                {
                     skin.font_data = Some(std::sync::Arc::new(buffer));
                 }
             }

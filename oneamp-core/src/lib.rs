@@ -344,7 +344,7 @@ pub struct TrackInfo {
     pub channels: Option<u8>,
     /// Audio codec format (e.g., "MP3", "FLAC", "OGG", "WAV")
     pub codec: Option<String>,
-    /// Bitrate in kbps
+    /// Bitrate in bits per second (bps) — divide by 1000 for kbps display.
     pub bitrate: Option<u32>,
     /// Track number from ID3v2 `TRCK` / Vorbis `TRACKNUMBER`. Many
     /// taggers write `"3/12"` (track 3 of 12); we keep only the leading
@@ -377,10 +377,15 @@ pub struct TrackInfo {
 /// would let a broken tag mask itself as "no gain needed".
 fn parse_replaygain_db(raw: &str) -> Option<f32> {
     let trimmed = raw.trim();
-    // Strip a trailing " dB" / " DB" / " db" if present. Match by suffix
-    // (case-insensitive) so we don't reject otherwise-valid numbers.
-    let numeric = if trimmed.len() > 2 && trimmed[trimmed.len() - 2..].eq_ignore_ascii_case("db") {
-        trimmed[..trimmed.len() - 2].trim()
+    // Strip a trailing "dB" / "DB" / "db" if present. Measure the suffix
+    // in *chars*, not a fixed byte offset — `trimmed[len - 2..]` panics
+    // whenever the string ends with a multi-byte UTF-8 character (e.g. a
+    // stray "é" from a mistagged file), since a raw byte offset can land
+    // mid-codepoint.
+    let suffix_len: usize = trimmed.chars().rev().take(2).map(char::len_utf8).sum();
+    let tail = &trimmed[trimmed.len() - suffix_len..];
+    let numeric = if tail.eq_ignore_ascii_case("db") {
+        trimmed[..trimmed.len() - suffix_len].trim()
     } else {
         trimmed
     };
@@ -730,6 +735,19 @@ mod tests {
         // Non-finite floats are rejected so the gain stage can't NaN.
         assert_eq!(parse_replaygain_db("inf"), None);
         assert_eq!(parse_replaygain_db("NaN dB"), None);
+    }
+
+    #[test]
+    fn parse_replaygain_db_does_not_panic_on_multibyte_suffix() {
+        // A trailing multi-byte UTF-8 char must never panic when the
+        // suffix check probes the last two chars — regression for a
+        // byte-offset slice that used to land mid-codepoint.
+        assert_eq!(parse_replaygain_db("é"), None);
+        assert_eq!(parse_replaygain_db("-6.78 é"), None);
+        assert_eq!(parse_replaygain_db("日"), None);
+        // Single-char and empty-after-trim inputs must not panic either.
+        assert_eq!(parse_replaygain_db("d"), None);
+        assert_eq!(parse_replaygain_db(" "), None);
     }
 
     #[test]

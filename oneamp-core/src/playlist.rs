@@ -614,15 +614,63 @@ impl Playlist {
     }
 
     /// Index that `next_entry` would advance to, without mutating state.
-    /// Used by gapless preload to peek at the upcoming track.
+    /// Used by gapless preload to prefetch the upcoming track — it MUST
+    /// mirror `next_entry`'s priority order (queue, then shuffle, then
+    /// sequential), or the track gapless-preloads can diverge from the
+    /// one `next_entry` actually swaps to on transition.
     pub fn peek_next_index(&self) -> Option<usize> {
         if self.entries.is_empty() {
             return None;
         }
+
+        // 1. Queue takes absolute priority, same as `next_entry`.
+        if let Some(&next) = self.queue.first() {
+            return Some(next);
+        }
+
+        if self.shuffle_enabled {
+            return Some(self.peek_next_shuffle_index());
+        }
+
         Some(match self.current_index {
             Some(current) => (current + 1) % self.entries.len(),
             None => 0,
         })
+    }
+
+    /// Non-mutating version of `next_shuffle_index` for `peek_next_index`.
+    /// Unlike the mutating version, this never reshuffles or advances the
+    /// seed — a peek must not have side effects. When the anti-repeat pool
+    /// is exhausted (every candidate played recently), it reports what the
+    /// reshuffle's first pick *would* currently be, without committing to
+    /// it, since the real reshuffle only happens inside `next_entry`.
+    fn peek_next_shuffle_index(&self) -> usize {
+        let len = self.entries.len();
+        if self.shuffle_order.len() != len {
+            // Order is stale relative to the playlist; without mutating we
+            // can't regenerate it, so fall back to the current shuffle
+            // order's first unplayed entry, or index 0.
+            return self
+                .shuffle_order
+                .iter()
+                .find(|i| !self.history.contains(i))
+                .copied()
+                .or_else(|| self.shuffle_order.first().copied())
+                .unwrap_or(0);
+        }
+        let pos = self
+            .current_index
+            .and_then(|c| self.shuffle_order.iter().position(|&i| i == c))
+            .unwrap_or(0);
+
+        for step in 1..self.shuffle_order.len() {
+            let cand = self.shuffle_order[(pos + step) % self.shuffle_order.len()];
+            if !self.history.contains(&cand) {
+                return cand;
+            }
+        }
+
+        self.shuffle_order.first().copied().unwrap_or(0)
     }
 
     /// Mutating retreat to the previous track.
@@ -1513,6 +1561,60 @@ mod tests {
 
         // Test previous
         assert_eq!(playlist.previous_index(), Some(0));
+    }
+
+    #[test]
+    fn peek_next_index_matches_next_entry_sequential() {
+        let mut playlist = Playlist::new("Test".to_string());
+        for i in 0..5 {
+            playlist.add_entry(PlaylistEntry::new(PathBuf::from(format!("song{}.mp3", i))));
+        }
+        playlist.set_current_index(Some(1));
+
+        let peeked = playlist.peek_next_index();
+        playlist.next_entry();
+        let advanced = playlist.current_index;
+        assert_eq!(peeked, advanced);
+        assert_eq!(peeked, Some(2));
+    }
+
+    #[test]
+    fn peek_next_index_honors_play_next_queue() {
+        let mut playlist = Playlist::new("Test".to_string());
+        for i in 0..5 {
+            playlist.add_entry(PlaylistEntry::new(PathBuf::from(format!("song{}.mp3", i))));
+        }
+        playlist.set_current_index(Some(0));
+        // Queue index 4 to play next — sequential order would say 1.
+        playlist.queue_track(4);
+
+        let peeked = playlist.peek_next_index();
+        assert_eq!(peeked, Some(4));
+
+        playlist.next_entry();
+        let advanced = playlist.current_index;
+        assert_eq!(peeked, advanced, "gapless preload must match next_entry");
+    }
+
+    #[test]
+    fn peek_next_index_matches_next_entry_shuffle() {
+        let mut playlist = Playlist::new("Test".to_string());
+        for i in 0..8 {
+            playlist.add_entry(PlaylistEntry::new(PathBuf::from(format!("song{}.mp3", i))));
+        }
+        playlist.set_shuffle(true);
+        playlist.set_shuffle_seed(42);
+        playlist.set_current_index(Some(0));
+
+        for _ in 0..6 {
+            let peeked = playlist.peek_next_index();
+            playlist.next_entry();
+            let advanced = playlist.current_index;
+            assert_eq!(
+                peeked, advanced,
+                "gapless preload must match next_entry in shuffle mode"
+            );
+        }
     }
 
     #[test]

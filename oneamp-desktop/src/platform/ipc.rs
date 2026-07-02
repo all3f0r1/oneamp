@@ -21,6 +21,13 @@ use interprocess::local_socket::{ListenerOptions, Stream, prelude::*};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::thread;
+use std::time::Duration;
+
+/// A secondary instance that connects but stalls mid-handoff (partial
+/// write, frozen process) must not wedge the primary's listener — accepts
+/// are handled one at a time, so a stuck `read_exact` here blocks every
+/// other "open with" request behind it.
+const IPC_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Filesystem path of the Unix socket. Used both to construct the
 /// `Name` and to remove the file on graceful shutdown.
@@ -107,6 +114,11 @@ pub fn bind_primary() -> io::Result<(Receiver<Vec<PathBuf>>, PrimaryGuard)> {
 fn listener_loop(listener: interprocess::local_socket::Listener, tx: Sender<Vec<PathBuf>>) {
     for incoming in listener.incoming() {
         let Ok(mut stream) = incoming else { continue };
+        // Bound the read so a slow/partial client can't stall every
+        // subsequent secondary-instance handoff behind it. Best-effort:
+        // if the backend can't honor a timeout, we still fall back to a
+        // blocking read rather than refusing the connection outright.
+        let _ = stream.set_recv_timeout(Some(IPC_READ_TIMEOUT));
         if let Ok(paths) = read_paths(&mut stream)
             && !paths.is_empty()
         {

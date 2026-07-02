@@ -62,7 +62,17 @@ pub fn write_eqf<W: Write>(w: &mut W, preset: &EqfPreset) -> Result<()> {
 
     let mut name_buf = [0u8; PRESET_NAME_LEN];
     let bytes = preset.name.as_bytes();
-    let n = bytes.len().min(PRESET_NAME_LEN);
+    // Truncate at a UTF-8 char boundary, not a raw byte offset — cutting
+    // mid-codepoint would leave a corrupt trailing byte sequence instead
+    // of just a shorter (but valid) name.
+    let n = if bytes.len() <= PRESET_NAME_LEN {
+        bytes.len()
+    } else {
+        (0..=PRESET_NAME_LEN)
+            .rev()
+            .find(|&i| preset.name.is_char_boundary(i))
+            .unwrap_or(0)
+    };
     name_buf[..n].copy_from_slice(&bytes[..n]);
     w.write_all(&name_buf).context("writing preset name")?;
 
@@ -187,5 +197,24 @@ mod tests {
         let read = read_eqf(&mut Cursor::new(&buf)).unwrap();
         assert_eq!(read.name.len(), 257);
         assert!(read.name.chars().all(|c| c == 'A'));
+    }
+
+    #[test]
+    fn multibyte_name_truncates_at_char_boundary_not_mid_codepoint() {
+        // "é" is 2 bytes in UTF-8; 130 repeats = 260 bytes, so the naive
+        // 257-byte cutoff lands mid-codepoint (257 is odd). The writer
+        // must back off to the nearest char boundary (256) instead of
+        // emitting a corrupt trailing byte.
+        let name = "é".repeat(130);
+        let preset = EqfPreset {
+            name,
+            preamp_db: 0.0,
+            bands: [0.0; 10],
+        };
+        let mut buf = Vec::new();
+        write_eqf(&mut buf, &preset).unwrap();
+        let read = read_eqf(&mut Cursor::new(&buf)).unwrap();
+        assert_eq!(read.name, "é".repeat(128));
+        assert!(read.name.chars().all(|c| c == 'é'));
     }
 }
