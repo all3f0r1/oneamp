@@ -72,7 +72,7 @@ impl RecentFiles {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            file.play_count += 1;
+            file.play_count = file.play_count.saturating_add(1);
             self.files.push_front(file);
         } else {
             // Add new file
@@ -172,6 +172,21 @@ mod tests {
 
         assert_eq!(recent.len(), 1);
         assert_eq!(recent.files()[0].play_count, 2);
+    }
+
+    #[test]
+    fn duplicate_file_play_count_saturates() {
+        let mut recent = RecentFiles::new();
+        recent.files.push_front(RecentFile {
+            path: PathBuf::from("/path/to/song.mp3"),
+            last_played: 0,
+            play_count: u32::MAX,
+        });
+
+        recent.add_file(PathBuf::from("/path/to/song.mp3"));
+
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent.files()[0].play_count, u32::MAX);
     }
 
     #[test]
