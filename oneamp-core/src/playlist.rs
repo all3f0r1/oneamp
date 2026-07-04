@@ -1124,28 +1124,43 @@ impl Playlist {
 
     /// Sort playlist by specified order
     pub fn sort_by(&mut self, order: SortOrder) {
+        let current_path = self
+            .current_index
+            .and_then(|i| self.entries.get(i))
+            .map(|e| e.path.clone());
         let queue_paths = self.indices_to_paths(&self.queue);
         let history_paths = self.indices_to_paths(&self.history);
+        let selected_paths: Vec<PathBuf> = self
+            .selected
+            .iter()
+            .filter_map(|&i| self.entries.get(i).map(|e| e.path.clone()))
+            .collect();
+        let last_clicked_path = self
+            .last_clicked
+            .and_then(|i| self.entries.get(i))
+            .map(|e| e.path.clone());
+
         match order {
             SortOrder::Title => {
                 self.entries.sort_by(|a, b| {
                     a.display_name()
                         .to_lowercase()
                         .cmp(&b.display_name().to_lowercase())
+                        .then_with(|| a.path.cmp(&b.path))
                 });
             }
             SortOrder::Artist => {
                 self.entries.sort_by(|a, b| {
                     let a_artist = a.artist.as_deref().unwrap_or("").to_lowercase();
                     let b_artist = b.artist.as_deref().unwrap_or("").to_lowercase();
-                    a_artist.cmp(&b_artist)
+                    a_artist.cmp(&b_artist).then_with(|| a.path.cmp(&b.path))
                 });
             }
             SortOrder::Album => {
                 self.entries.sort_by(|a, b| {
                     let a_album = a.album.as_deref().unwrap_or("").to_lowercase();
                     let b_album = b.album.as_deref().unwrap_or("").to_lowercase();
-                    a_album.cmp(&b_album)
+                    a_album.cmp(&b_album).then_with(|| a.path.cmp(&b.path))
                 });
             }
             SortOrder::Path => {
@@ -1158,12 +1173,19 @@ impl Playlist {
                     a_dur
                         .partial_cmp(&b_dur)
                         .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| a.path.cmp(&b.path))
                 });
             }
         }
 
+        if let Some(path) = current_path {
+            self.current_index = self.entries.iter().position(|e| e.path == path);
+        }
         self.queue = self.paths_to_indices(&queue_paths);
         self.history = self.paths_to_indices(&history_paths);
+        self.selected = self.paths_to_indices(&selected_paths).into_iter().collect();
+        self.last_clicked =
+            last_clicked_path.and_then(|path| self.entries.iter().position(|e| e.path == path));
 
         if self.shuffle_enabled {
             self.regenerate_shuffle();
@@ -1678,6 +1700,46 @@ mod tests {
         assert_eq!(playlist.entries[0].title, Some("Alpha".to_string()));
         assert_eq!(playlist.entries[1].title, Some("Bravo".to_string()));
         assert_eq!(playlist.entries[2].title, Some("Charlie".to_string()));
+    }
+
+    #[test]
+    fn sort_preserves_index_backed_state_by_track_identity() {
+        let mut playlist = Playlist::new("Test".to_string());
+
+        playlist.add_entry(PlaylistEntry::with_metadata(
+            PathBuf::from("c.mp3"),
+            Some("Charlie".to_string()),
+            Some("Artist C".to_string()),
+            None,
+            Some(30.0),
+        ));
+        playlist.add_entry(PlaylistEntry::with_metadata(
+            PathBuf::from("a.mp3"),
+            Some("Alpha".to_string()),
+            Some("Artist A".to_string()),
+            None,
+            Some(10.0),
+        ));
+        playlist.add_entry(PlaylistEntry::with_metadata(
+            PathBuf::from("b.mp3"),
+            Some("Bravo".to_string()),
+            Some("Artist B".to_string()),
+            None,
+            Some(20.0),
+        ));
+
+        playlist.set_current_index(Some(2));
+        playlist.queue_track(0);
+        playlist.set_selected(2);
+
+        playlist.sort_by(SortOrder::Title);
+
+        assert_eq!(
+            playlist.current_entry().unwrap().path,
+            PathBuf::from("b.mp3")
+        );
+        assert_eq!(playlist.queue, vec![2]);
+        assert_eq!(playlist.selected_index(), Some(1));
     }
 
     /// Build a playlist of N synthetic tracks (`0.mp3`..`{n}.mp3`).

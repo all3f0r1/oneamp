@@ -85,9 +85,11 @@ impl EqualizerPreset {
         }
     }
 
-    /// Validate that the preset has the correct number of bands
+    /// Validate that the preset has the correct number of finite bands.
     pub fn is_valid(&self) -> bool {
         self.gains.len() == 10
+            && self.gains.iter().all(|gain| gain.is_finite())
+            && self.preamp_db.is_finite()
     }
 }
 
@@ -630,6 +632,18 @@ mod tests {
         let result = manager.add_preset(invalid);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_non_finite_preset_is_invalid() {
+        let mut manager = PresetManager::new();
+
+        let invalid_gain = EqualizerPreset::new("Invalid Gain".to_string(), vec![f32::NAN; 10]);
+        assert!(manager.add_preset(invalid_gain).is_err());
+
+        let mut invalid_preamp = EqualizerPreset::new("Invalid Preamp".to_string(), vec![0.0; 10]);
+        invalid_preamp.preamp_db = f32::INFINITY;
+        assert!(manager.add_preset(invalid_preamp).is_err());
     }
 
     #[test]

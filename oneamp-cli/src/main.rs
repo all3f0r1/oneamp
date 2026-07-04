@@ -138,8 +138,8 @@ fn play_audio(file_path: &PathBuf) -> Result<()> {
 
         // Update progress bar
         while !sink.empty() {
-            let elapsed = duration.as_secs().saturating_sub(sink.get_pos().as_secs());
-            pb.set_position(elapsed);
+            let elapsed = sink.get_pos().min(duration);
+            pb.set_position(elapsed.as_secs());
             thread::sleep(Duration::from_millis(100));
         }
 
