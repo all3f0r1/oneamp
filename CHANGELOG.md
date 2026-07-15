@@ -4,6 +4,26 @@ All notable changes to OneAmp are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] — 2026-07-15
+
+### Fixed
+- Playlist sort: the UI's "Sort by title" action (`sort_by_title`) went
+  through a second sort implementation that cleared the selection and the
+  shift-click anchor. It now delegates to the canonical `sort_by`, so a
+  sort preserves every index-backed pointer — currently-playing track,
+  play queue, history, multi-selection and anchor — by track identity.
+- Config: lenient (partial) config loading silently reset `show_remaining`
+  and `resume_long_files` to their defaults whenever another field forced
+  the recovery path; both settings are now preserved.
+- Playlist and equalizer-preset edge cases hardened (see #1).
+
+### Changed
+- `AudioEvent::ShuffleUpdated` is now handled by the app state reducer,
+  keeping the UI shuffle indicator in sync with the audio engine.
+- Config file IO split into path-explicit `load_from`/`save_to`; the
+  save/load round-trip test runs against a temp dir instead of the real
+  user config.
+
 ## [1.0.0] — 2026-06-16
 
 First public release. A cross-platform, Winamp-faithful audio player written
