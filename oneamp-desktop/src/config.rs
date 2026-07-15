@@ -3,7 +3,7 @@ use oneamp_core::{RecentFiles, RepeatMode};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EqualizerConfig {
@@ -431,10 +431,19 @@ impl AppConfig {
                 return (Self::default(), true);
             }
         };
+        Self::load_from(&path)
+    }
+
+    /// Path-explicit counterpart of [`AppConfig::load`] — same three-stage
+    /// strict/lenient/backup dance, but against an arbitrary path instead
+    /// of the resolved system config location. Lets tests round-trip
+    /// through a `TempDir` instead of touching the user's real config
+    /// file.
+    pub fn load_from(path: &Path) -> (Self, bool) {
         if !path.exists() {
             return (Self::default(), true);
         }
-        let content = match fs::read_to_string(&path) {
+        let content = match fs::read_to_string(path) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("Failed to read config file: {}", e);
@@ -477,7 +486,7 @@ impl AppConfig {
                 .map(|d| d.as_secs())
                 .unwrap_or(0)
         ));
-        if let Err(e) = fs::copy(&path, &backup) {
+        if let Err(e) = fs::copy(path, &backup) {
             eprintln!("Failed to back up corrupt config: {}", e);
         } else {
             eprintln!(
@@ -538,6 +547,8 @@ impl AppConfig {
         pull!(ui_lang);
         pull!(user_skins_dir);
         pull!(playlist_display_format);
+        pull!(show_remaining);
+        pull!(resume_long_files);
     }
 
     /// Save configuration to file. Uses a write-to-tmp + rename dance so a
@@ -547,6 +558,14 @@ impl AppConfig {
     /// is < 4 KB and we save at most once per ~750 ms of activity).
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path()?;
+        self.save_to(&path)
+    }
+
+    /// Path-explicit counterpart of [`AppConfig::save`] — same tmp+rename+
+    /// fsync dance, but against an arbitrary path instead of the resolved
+    /// system config location. Lets tests round-trip through a `TempDir`
+    /// instead of touching the user's real config file.
+    pub fn save_to(&self, path: &Path) -> Result<()> {
         let content = serde_json::to_string_pretty(self).context("Failed to serialize config")?;
         let tmp = path.with_extension("json.tmp");
         {
@@ -555,7 +574,7 @@ impl AppConfig {
                 .context("Failed to write temp config file")?;
             f.sync_all().context("Failed to fsync temp config file")?;
         }
-        fs::rename(&tmp, &path).context("Failed to rename temp config file into place")?;
+        fs::rename(&tmp, path).context("Failed to rename temp config file into place")?;
         Ok(())
     }
 }
@@ -642,25 +661,26 @@ mod tests {
 
     #[test]
     fn test_config_save_and_load() {
-        // Create a test config
+        // Round-trip through a TempDir via the path-explicit `save_to` /
+        // `load_from` — never touches the user's real config.json.
+        let dir = tempfile::TempDir::new().expect("failed to create temp dir");
+        let path = dir.path().join("config.json");
+
         let mut config = AppConfig::default();
         config.equalizer.enabled = true;
         config.equalizer.gains = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
         config.first_run = false;
 
-        // Save it
-        let save_result = config.save();
-        // May fail if no config directory is available, that's ok for testing
-        if save_result.is_ok() {
-            // Load it back
-            let (loaded_config, is_first_run) = AppConfig::load();
+        config
+            .save_to(&path)
+            .expect("save_to a writable temp dir should succeed");
 
-            // Verify values
-            assert_eq!(config.equalizer.enabled, loaded_config.equalizer.enabled);
-            assert_eq!(config.equalizer.gains, loaded_config.equalizer.gains);
-            // first_run should be false after loading
-            assert!(!is_first_run, "Should not be first run after save/load");
-        }
+        let (loaded_config, is_first_run) = AppConfig::load_from(&path);
+
+        assert_eq!(config.equalizer.enabled, loaded_config.equalizer.enabled);
+        assert_eq!(config.equalizer.gains, loaded_config.equalizer.gains);
+        // first_run should be false after loading
+        assert!(!is_first_run, "Should not be first run after save/load");
     }
 
     #[test]
@@ -740,6 +760,35 @@ mod tests {
         assert!(
             cfg.user_scale.is_none(),
             "mistyped field falls back to default (None)"
+        );
+    }
+
+    #[test]
+    fn lenient_merge_preserves_show_remaining_and_resume_long_files() {
+        // `show_remaining` / `resume_long_files` are the two AppConfig
+        // fields the `pull!` list used to omit (it stopped at
+        // `playlist_display_format`), so a version upgrade that hit the
+        // lenient path silently dropped them back to default. Confirm
+        // they now survive the lenient merge next to a deliberately
+        // mistyped field that still forces that path.
+        let raw = serde_json::json!({
+            "user_scale": { "factor": 2.0 }, // wrong shape, forces the lenient path
+            "show_remaining": true,
+            "resume_long_files": true,
+        });
+        let mut cfg = AppConfig::default();
+        cfg.lenient_merge_from_value(&raw);
+        assert!(
+            cfg.show_remaining,
+            "show_remaining should survive the lenient merge"
+        );
+        assert!(
+            cfg.resume_long_files,
+            "resume_long_files should survive the lenient merge"
+        );
+        assert!(
+            cfg.user_scale.is_none(),
+            "mistyped field still falls back to default (None)"
         );
     }
 

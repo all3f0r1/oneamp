@@ -867,34 +867,14 @@ impl Playlist {
         }
     }
 
-    /// MISC → SORT (by title, case-insensitive). The currently-playing
-    /// track stays current — its index moves with the sort. Selection is
-    /// reset for simplicity.
+    /// MISC → SORT (by title, case-insensitive). Thin delegate to the
+    /// canonical [`sort_by`](Self::sort_by) so the UI's `SortByTitle`
+    /// action goes through the one sort path that preserves *every*
+    /// index-backed pointer — currently-playing track, queue, history,
+    /// multi-selection and the shift-click anchor — by track identity.
+    /// It must never diverge from `sort_by`; do not reimplement here.
     pub fn sort_by_title(&mut self) {
-        let current_path = self
-            .current_index
-            .and_then(|i| self.entries.get(i))
-            .map(|e| e.path.clone());
-        let queue_paths = self.indices_to_paths(&self.queue);
-        let history_paths = self.indices_to_paths(&self.history);
-
-        self.entries.sort_by(|a, b| {
-            a.display_name()
-                .to_lowercase()
-                .cmp(&b.display_name().to_lowercase())
-                .then_with(|| a.path.cmp(&b.path))
-        });
-
-        if let Some(path) = current_path {
-            self.current_index = self.entries.iter().position(|e| e.path == path);
-        }
-        self.queue = self.paths_to_indices(&queue_paths);
-        self.history = self.paths_to_indices(&history_paths);
-        self.selected.clear();
-        self.last_clicked = None;
-        if self.shuffle_enabled {
-            self.regenerate_shuffle();
-        }
+        self.sort_by(SortOrder::Title);
     }
 
     /// Snapshot the entry paths a list of indices currently points at, used
@@ -1740,6 +1720,61 @@ mod tests {
         );
         assert_eq!(playlist.queue, vec![2]);
         assert_eq!(playlist.selected_index(), Some(1));
+    }
+
+    /// Exercises the *UI* sort path (`sort_by_title`, which the
+    /// `SortByTitle` action calls) and additionally pins the history
+    /// stack and the shift-click anchor — pointers the sibling test
+    /// above doesn't touch. All five must survive by track identity;
+    /// previously `sort_by_title` cleared the selection and anchor.
+    #[test]
+    fn sort_by_title_preserves_history_and_anchor_via_delegate() {
+        let mut playlist = Playlist::new("Test".to_string());
+
+        // Pre-sort indices: 0=charlie, 1=alpha, 2=bravo, 3=delta.
+        for (path, title) in [
+            ("charlie.mp3", "Charlie"),
+            ("alpha.mp3", "Alpha"),
+            ("bravo.mp3", "Bravo"),
+            ("delta.mp3", "Delta"),
+        ] {
+            playlist.add_entry(PlaylistEntry::with_metadata(
+                PathBuf::from(path),
+                Some(title.to_string()),
+                None,
+                None,
+                None,
+            ));
+        }
+
+        playlist.set_current_index(Some(2)); // bravo
+        playlist.queue_track(3); // delta
+        playlist.history.push(0); // charlie
+        playlist.set_selected(1); // alpha
+        playlist.toggle_selected(3); // + delta; last_clicked = delta
+        assert_eq!(playlist.selected, BTreeSet::from([1, 3]));
+        assert_eq!(playlist.last_clicked, Some(3));
+
+        // Route through the delegate the UI actually calls.
+        playlist.sort_by_title();
+
+        // Post-sort order: alpha, bravo, charlie, delta.
+        assert_eq!(playlist.entries[0].path, PathBuf::from("alpha.mp3"));
+        assert_eq!(playlist.entries[3].path, PathBuf::from("delta.mp3"));
+
+        assert_eq!(playlist.current_index, Some(1), "bravo stays current");
+        assert_eq!(playlist.queue, vec![3], "delta stays queued");
+        assert_eq!(playlist.history, vec![2], "charlie stays in history");
+        assert_eq!(
+            playlist.selected,
+            BTreeSet::from([0, 3]),
+            "selection (alpha, delta) survives — not cleared"
+        );
+        assert_eq!(
+            playlist.last_clicked,
+            Some(3),
+            "shift-click anchor (delta) survives — not reset"
+        );
     }
 
     /// Build a playlist of N synthetic tracks (`0.mp3`..`{n}.mp3`).

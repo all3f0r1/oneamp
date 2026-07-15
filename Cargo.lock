@@ -3651,6 +3651,7 @@ dependencies = [
  "serde",
  "serde_json",
  "souvlaki",
+ "tempfile",
  "tray-icon",
  "ureq",
 ]
