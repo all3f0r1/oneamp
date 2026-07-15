@@ -134,6 +134,9 @@ impl AppState {
             oneamp_core::AudioEvent::RepeatModeUpdated(mode) => {
                 self.repeat_mode = mode;
             }
+            oneamp_core::AudioEvent::ShuffleUpdated(enabled) => {
+                self.shuffle_enabled = enabled;
+            }
             _ => {}
         }
     }
@@ -181,5 +184,15 @@ mod tests {
         let mut state = AppState::default();
         state.handle_audio_event(oneamp_core::AudioEvent::BalanceUpdated(-0.4));
         assert!((state.volume.balance + 0.4).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_handle_audio_event_shuffle() {
+        let mut state = AppState::default();
+        assert!(!state.shuffle_enabled);
+        state.handle_audio_event(oneamp_core::AudioEvent::ShuffleUpdated(true));
+        assert!(state.shuffle_enabled);
+        state.handle_audio_event(oneamp_core::AudioEvent::ShuffleUpdated(false));
+        assert!(!state.shuffle_enabled);
     }
 }

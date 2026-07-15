@@ -88,6 +88,15 @@ impl OneAmpApp {
                 self.playlist.invert_selection();
             }
             PlaylistAction::SortByTitle => {
+                // `sort_by_title()` now just delegates to
+                // `Playlist::sort_by(SortOrder::Title)`, which is the
+                // canonical sort: current track, queue, history,
+                // selection, and shift-click anchor all survive the
+                // reorder (by path). `OneAmpApp` can't be constructed in
+                // a unit test without an egui/eframe context, so that
+                // invariant is covered at the `Playlist` level instead —
+                // see `sort_by_preserves_current_queue_history_selection_and_anchor`
+                // in `oneamp-core/src/playlist.rs`.
                 self.playlist.sort_by_title();
             }
             PlaylistAction::MoveTrack { from, to } => {
