@@ -37,7 +37,11 @@ So: build the thing.
 - **10-band equalizer** — RBJ biquads at ISO 266 / IEC 61260 octave centres (`31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000` Hz), real-time, ±20 dB range, zero-alloc on the decode path (`process_stereo_in_place` mutates the decoder's output buffer directly). Constant-Q, gain-dependent bandwidth — `Q = √2 / (1 + 1/A)` with `A = 10^(|gain_db|/40)` — so heavy boosts focus on their target band instead of smearing across two octaves. Coefficient updates ramp linearly over ~10 ms (∼441 samples at 44.1 kHz), so dragging a slider is click-free. Per-preset preamp values auto-computed from the cascaded transfer function (`Equalizer::headroom_db`, sampled at 4096 log-spaced points 20 Hz–20 kHz), so the pre-buffer limiter doesn't get pumped by aggressive presets — Bass Boost lands at ≈-9 dB, Hip-Hop / Club ≈-8 dB, Metal ≈-7 dB. 16 built-in presets with documented design intent — notably Vocal Boost centres on the 1–4 kHz vocal-presence octave (boosting 250 Hz, as the naïve preset does, adds mud, not intelligibility); Bass Boost and Treble Boost are clean shelves; Laptop Speakers cuts the typical 1–3 kHz "honkiness" instead of boosting it. Pixel-perfect skinned EQ window with spline preview.
 - **Loudness compensation** — opt-in Fletcher-Munson / ISO 226 curve under Options → Loudness. Two RBJ shelves (120 Hz low + 4 kHz high, S=1) tilt up as master volume drops so perceived tonal balance stays roughly constant at low listening levels (≈1.8 dB lift at volume = 0.5, 3.1 dB at 0.3, 6 dB cap). Mathematically pass-through at full volume; coefficient ramping over 10 ms means dragging the volume slider doesn't click; inserted after the EQ and before preamp / balance / limiter so the shelves shape the EQ'd signal and the limiter sees the post-loudness peak.
 - **Stereo balance** — constant-power sin/cos panning law (`θ = (balance + 1) · π/4`, `L = cos θ`, `R = sin θ`). Sum of squares stays at 1.0 across the entire range, so perceived loudness stays flat across the pan range — no 3 dB centre hump like the naïve "cut one side, leave the other at 1.0" law gives.
-- **Playlist** — drag-drop files and folders, M3U save/load, double-click to play, native-skinned frame, resizable.
+- **Playlist** — drag-drop files and folders (added in the background, `Esc` cancels), M3U / M3U8 / PLS load and save, double-click to play, play-next queue, undo (`Ctrl+Z`), native-skinned frame, resizable. *Jump to file* (`J` / `F3`) finds a track by typing a few words and plays or queues it without touching the playlist view.
+- **Session restore** — the playlist, current track, queue and playhead come back at launch, along with window layout and audio settings. Nothing plays until you press Play; files that went missing stay in the list, dimmed.
+- **Detached windows** — equalizer and playlist can live in their own windows (*View › Detached windows*). Windows docked to the player move with it, and a moved window snaps to nearby edges. X11, Windows and macOS; Wayland can't position windows, so it keeps the docked stack.
+- **EQ AUTO** — Winamp's per-track auto-load presets: *PRESETS › Auto-load for this track*, then AUTO on. An auto-loaded preset never overwrites your saved curve. Double-click a slider to reset it; hover to read its exact frequency and gain.
+- **Preferences** — `Ctrl+P`: General, Playback, Playlist, Equalizer (rename / delete presets), Appearance, Shortcuts.
 - **Native `.wsz` skins** — drop any classic Winamp skin onto OneAmp via `Alt+S`. A bundled default skin ships embedded in the binary, so first launch is never naked egui.
 - **Visualizer** — three modes (click-cycle Spectrum → Oscilloscope → Peak meter → Off), all painted in the skin's authentic viscolor palette:
     - *Spectrum analyzer* — 2048-point Hann-windowed FFT with DC removal (DC-biased files no longer pin bins 0/1 high), 21 Hz bin resolution (distinguishes 31.5 Hz and 63 Hz EQ bands), cap at 0.95 × Nyquist (~21 kHz — brilliance / air bands are no longer dead), dB-correct display (`magnitude / (FFT · 0.5) → 20·log10 → map [-60, 0] dBFS → [0, 1]`), max-of-bin reduction so transients show as crisp peaks instead of being averaged out. 16 log-spaced bins emitted directly by the engine (no double-binning).
@@ -105,25 +109,40 @@ dependencies vary by OS:
 
 ## Hotkeys
 
-Authentic Winamp where possible.
+The default *Winamp Classic* profile follows Winamp 2.x / 5. Shortcuts
+depend on which window has focus, and none fire while you type in a
+field. `F1` lists them all; the OneAmp 1.0 layout (`N` / `P` / `S`
+transport, letters jump in the playlist) is in *Preferences › Shortcuts*.
 
 | Key | Action |
 |---|---|
+| `Z` `X` `C` `V` `B` | Previous / Play / Pause / Stop / Next |
 | `Space` | Play / pause |
-| `S` | Stop |
-| `N` | Next track |
-| `P` | Previous track |
-| `L` / `Ctrl+O` | Open file |
-| `Shift+L` / `Ctrl+Shift+O` | Open folder (recursive) |
+| `S` / `R` | Shuffle / cycle repeat |
+| `Ctrl+V` | Stop after current track |
+| `Up` / `Down` | Volume (`Shift`: fine) |
+| `Left` / `Right` | Seek 5 s (`Shift`: 30 s) |
+| `L` / `Ctrl+O` | Open file (replaces the playlist) |
+| `Shift+L` / `Ctrl+Shift+O` | Add folder |
 | `Ctrl+L` | Open URL (internet radio / podcast) |
-| `V` | Toggle shuffle |
-| `R` | Cycle repeat (off → all → one) |
-| `Alt+E` | Toggle playlist window |
-| `Alt+G` | Toggle equalizer window |
-| `Alt+M` | Window shade |
-| `Alt+S` | Load `.wsz` skin |
-| `Ctrl+T` | Toggle "Always on top" (X11 only) |
-| `F1` / `?` | Toggle hotkey cheat-sheet |
+| `J` / `F3` | Jump to file |
+| `Ctrl+F` | Filter the playlist |
+| `Ctrl+Z` | Undo playlist change |
+| `Alt+E` / `Alt+G` | Show / hide playlist / equalizer |
+| `Ctrl+W` | Window shade |
+| `Ctrl+A` | Always on top |
+| `Ctrl+T` | Elapsed / remaining time |
+| `Ctrl+D` | Double size |
+| `Ctrl+P` | Preferences |
+| `Alt+S` | Skins |
+| `F1` | Keyboard shortcuts |
+
+Playlist window: arrows / `Home` / `End` / `PgUp` / `PgDn` select
+(`Shift` extends), `Alt+Up` / `Alt+Down` move the selection, `Enter`
+plays, `Del` removes, `Q` queues, `Ctrl+A` selects all.
+
+Equalizer window: `1`–`0` raise and `Q`–`P` lower the ten bands, `` ` ``
+/ `Tab` preamp, `N` EQ on / off, `A` AUTO.
 
 ## Architecture
 

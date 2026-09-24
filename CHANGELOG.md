@@ -4,6 +4,64 @@ All notable changes to OneAmp are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-09-24
+
+Winamp Classic habits: arrange your windows, get your session back and
+drive everything from the keyboard.
+
+### Added
+- **Session restore**: the playlist, its order, the current track, the
+  play-next queue and the playhead come back at launch. Playback never
+  starts on its own; the saved position is applied when you press Play.
+  Files that can't be found stay in the list, dimmed, and are counted in
+  a toast. Window layout, playlist height and shade mode are restored.
+- **Detached windows** (View › Detached windows, or Preferences):
+  equalizer and playlist in their own windows, moved by their title
+  bars. Windows docked to the player follow it; a moved window snaps to
+  nearby edges. X11, Windows and macOS (Wayland can't place windows).
+- **Winamp Classic keyboard profile**, on by default, from one shortcut
+  table shared with the menus: `Z X C V B` everywhere, `S` shuffle, `R`
+  repeat, `J` / `F3` Jump to file, `Ctrl+P` preferences, `Alt+E` /
+  `Alt+G` panels, `Ctrl+W` shade, `Ctrl+A` always on top, `Ctrl+T`
+  elapsed/remaining. Focus-aware: in the playlist, arrows / Home / End /
+  Page keys select (Shift extends), `Alt+↑/↓` move the selection, `Enter`
+  plays, `Del` removes, `Q` queues, `Ctrl+A` selects all; in the
+  equalizer, `1`–`0` / `Q`–`P` raise and lower bands, `` ` `` / `Tab`
+  the preamp, `N` toggles the EQ, `A` AUTO. No shortcut fires while you
+  type. The OneAmp 1.0 layout stays available (Preferences › Shortcuts).
+  `F1` lists the active shortcuts.
+- **Jump to file** box: type words, pick with the arrows, `Enter` plays,
+  `Shift+Enter` queues. The playlist view is left untouched.
+- **Undo** (`Ctrl+Z`) for playlist remove, clear, sort, reorder and
+  replace, 20 steps.
+- **EQ AUTO**: per-track auto-load presets (PRESETS › Auto-load for this
+  track / Remove track auto-load). An auto-loaded preset never replaces
+  your saved curve; editing the EQ by hand makes the edited curve the
+  saved one. Double-click a slider to reset it; hovering a slider shows
+  its exact frequency and gain.
+- **Preferences** window (`Ctrl+P`): General, Playback, Playlist,
+  Equalizer (rename / delete your presets), Appearance, Shortcuts.
+- **Playlists**: M3U8 and PLS load and save alongside M3U, from the file
+  picker, drag-drop and the file manager (MIME types registered).
+- Large folders are added in the background with progress in the toast;
+  `Escape` cancels.
+
+### Changed
+- Open file (`L`, `Ctrl+O`, Eject) replaces the playlist and plays, like
+  Winamp's Play file; Add files still appends. `Ctrl+Z` restores the
+  previous list.
+- In the Winamp Classic profile, `S` toggles shuffle (it was Stop) and
+  `J` opens Jump to file instead of the inline filter (still on
+  `Ctrl+F`).
+
+### Fixed
+- Opening a dialog (URL, tags, presets, welcome) on a HiDPI screen shrank
+  the player until restart: egui's zoom is global to every window. The
+  player is now magnified by its own render scale and egui's zoom stays
+  at 1.
+- Playing a missing file opened a blocking error dialog; it's now a
+  toast.
+
 ## [1.0.3] — 2026-09-24
 
 ### Fixed

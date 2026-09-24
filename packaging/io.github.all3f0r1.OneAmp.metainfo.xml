@@ -69,14 +69,9 @@
   </screenshots>
 
   <releases>
-    <release version="1.2.0" date="2026-05-20">
+    <release version="1.1.0" date="2026-09-24">
       <description>
-        <p>Library breadth release: AAC / M4A / MP4 / ALAC playback (symphonia features `aac` + `isomp4` + `alac` — royalty-free codecs, no system OpenSSL). HTTP / HTTPS internet-radio + podcast streaming via Ctrl+L or the new playlist right-click "Add URL…" entry — backed by a custom symphonia MediaSource over ureq + rustls. ICY metadata (Shoutcast / Icecast `StreamTitle`) is stripped from the byte stream and bridged to the playlist row + desktop notifications in real time. New tag editor: right-click any playlist row → "Edit tags…" opens a modal for title / artist / album / album-artist / genre / year / track # / comment, writing back in place via lofty (ID3v1/v2, Vorbis, MP4 atoms, RIFF, APE — preserves cover art, ReplayGain, MusicBrainz IDs). Playlist rows now use a fully customisable display template (default `{artist} - {title}`, Winamp/iTunes convention) with `{artist}`, `{title}`, `{album}`, `{genre}`, `{tracknumber}`, `{year}`, `{duration}`, `{filename}` tokens; missing tags collapse separators automatically and the template is editable in-app via the new "Edit display format…" dialog.</p>
-      </description>
-    </release>
-    <release version="1.1.0" date="2026-05-19">
-      <description>
-        <p>Audio engine overhaul: 21-objective rewrite driven by an expert audio review. New features: loudness compensation (Fletcher-Munson volume-dependent shelves, opt-in via Options menu), peak/RMS meter visualizer alongside the spectrum and oscilloscope, per-preset preamp values that keep aggressive presets (Bass Boost, Hip-Hop, Club) from constantly tripping the limiter. Audible changes: constant-Q gain-dependent EQ (heavy boosts now stay focused on their target band instead of smearing two octaves), constant-power stereo balance (no more 3 dB center hump), coefficient smoothing on every EQ slider drag, revised preset curves with documented audio rationale (notably Vocal Boost which now targets 1-4 kHz instead of mud-inducing 250 Hz). Spectrum analyzer is now dB-correct (2048-point FFT, DC removal, max-of-bin grouping, coverage to ~21 kHz); oscilloscope gets a zero-crossing trigger and min/max decimation for stable phase-aligned display. Engine internals: lock-free SPSC ring on the rodio output hot path (no more priority inversion on the cpal callback), ArcSwap visualization snapshots replacing the unbounded event channel, recv_timeout-based idle parking (audio thread no longer busy-waits at 1 kHz), PTS-aligned position estimate (no drift on glitchy MP3s).</p>
+        <p>Winamp Classic habits: the playlist, current track, queue and position are restored at launch (playback never starts on its own); the equalizer and playlist can be detached into their own windows that snap together and follow the player; a Winamp Classic keyboard profile with focus-aware shortcuts, a Jump to file box (J / F3) and playlist undo (Ctrl+Z); EQ AUTO with per-track auto-load presets; a Preferences window (Ctrl+P); M3U8 and PLS playlists; large folders added in the background.</p>
       </description>
     </release>
     <release version="0.19.2" date="2026-05-13">
