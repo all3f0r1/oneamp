@@ -115,43 +115,43 @@ impl DialogTheme {
 
         v.window_fill = self.bg;
         v.panel_fill = self.bg;
-        v.window_stroke = Stroke::new(1.0, self.border);
+        v.window_stroke = Stroke::new(1.0_f32, self.border);
         v.override_text_color = Some(self.text);
         v.hyperlink_color = self.current;
         v.extreme_bg_color = shift(self.bg, -10);
 
         v.selection.bg_fill = self.selection_bg;
-        v.selection.stroke = Stroke::new(1.0, self.current);
+        v.selection.stroke = Stroke::new(1.0_f32, self.current);
 
         // Non-interactive: labels, frames.
         v.widgets.noninteractive.bg_fill = self.bg;
         v.widgets.noninteractive.weak_bg_fill = self.bg;
-        v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, self.border);
-        v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, self.text);
+        v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, self.border);
+        v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, self.text);
 
         // Inactive (idle) buttons / text edits.
         v.widgets.inactive.bg_fill = self.button_fill;
         v.widgets.inactive.weak_bg_fill = self.button_fill;
-        v.widgets.inactive.bg_stroke = Stroke::new(1.0, self.border);
-        v.widgets.inactive.fg_stroke = Stroke::new(1.0, self.text);
+        v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, self.border);
+        v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, self.text);
 
         // Hovered.
         v.widgets.hovered.bg_fill = self.button_hover;
         v.widgets.hovered.weak_bg_fill = self.button_hover;
-        v.widgets.hovered.bg_stroke = Stroke::new(1.0, self.current);
-        v.widgets.hovered.fg_stroke = Stroke::new(1.0, self.current);
+        v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, self.current);
+        v.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, self.current);
 
         // Active (pressed / focused).
         v.widgets.active.bg_fill = self.selection_bg;
         v.widgets.active.weak_bg_fill = self.selection_bg;
-        v.widgets.active.bg_stroke = Stroke::new(1.0, self.current);
-        v.widgets.active.fg_stroke = Stroke::new(1.0, self.current);
+        v.widgets.active.bg_stroke = Stroke::new(1.0_f32, self.current);
+        v.widgets.active.fg_stroke = Stroke::new(1.0_f32, self.current);
 
         // Open (combo box dropdowns).
         v.widgets.open.bg_fill = self.selection_bg;
         v.widgets.open.weak_bg_fill = self.selection_bg;
-        v.widgets.open.bg_stroke = Stroke::new(1.0, self.current);
-        v.widgets.open.fg_stroke = Stroke::new(1.0, self.current);
+        v.widgets.open.bg_stroke = Stroke::new(1.0_f32, self.current);
+        v.widgets.open.fg_stroke = Stroke::new(1.0_f32, self.current);
 
         ctx.set_style(style);
     }
@@ -390,7 +390,7 @@ fn paint_titlebar_procedural(ui: &mut Ui, theme: &DialogTheme, title: &str) -> T
             Pos2::new(rect.left(), rect.bottom() - 1.0),
             Pos2::new(rect.right(), rect.bottom() - 1.0),
         ],
-        Stroke::new(1.0, theme.border),
+        Stroke::new(1.0_f32, theme.border),
     );
 
     let close_rect = Rect::from_min_size(
@@ -408,9 +408,9 @@ fn paint_titlebar_procedural(ui: &mut Ui, theme: &DialogTheme, title: &str) -> T
     };
     ui.painter().rect_filled(close_rect, 2.0, close_fill);
     ui.painter()
-        .rect_stroke(close_rect, 2.0, Stroke::new(1.0, theme.border));
+        .rect_stroke(close_rect, 2.0, Stroke::new(1.0_f32, theme.border));
     let pad = 3.0;
-    let stroke = Stroke::new(1.5, theme.text);
+    let stroke = Stroke::new(1.5_f32, theme.text);
     ui.painter().line_segment(
         [
             close_rect.min + Vec2::splat(pad),

@@ -63,7 +63,9 @@ const WAVEFORM_FRAMES: usize = FFT_SIZE / 2;
 fn compute_spectrum(frames: &[f32], fft: &dyn Fft<f32>) -> Vec<f32> {
     let take = frames.len().min(FFT_SIZE * 2);
     let mut mono: Vec<f32> = frames[..take]
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|c| 0.5 * (c[0] + c[1]))
         .collect();
     // DC removal — bin 0/1 spikes on tracks with a non-zero offset
@@ -250,6 +252,8 @@ struct AudioEngineState {
     /// derives a volume-dependent low- and high-shelf boost so quiet
     /// listening preserves perceived tonal balance.
     loudness_enabled: bool,
+    /// See `AudioCommand::SetStopAfterCurrent`.
+    stop_after_current: bool,
 }
 
 impl Default for AudioEngineState {
@@ -269,6 +273,7 @@ impl Default for AudioEngineState {
             mono_enabled: false,
             output_device_name: None,
             loudness_enabled: false,
+            stop_after_current: false,
         }
     }
 }
@@ -302,7 +307,7 @@ fn apply_mono_downmix(samples: &mut [f32], channels: u16) {
     if channels != 2 {
         return;
     }
-    for chunk in samples.chunks_exact_mut(2) {
+    for chunk in samples.as_chunks_mut::<2>().0 {
         let m = 0.5 * (chunk[0] + chunk[1]);
         chunk[0] = m;
         chunk[1] = m;
@@ -440,7 +445,7 @@ impl PeakRmsMeter {
         let ch = channels.max(1) as usize;
         let alpha = self.rms_alpha;
         if ch == 2 {
-            for chunk in samples.chunks_exact(2) {
+            for chunk in samples.as_chunks::<2>().0 {
                 let l = chunk[0];
                 let r = chunk[1];
                 let la = l.abs();
@@ -605,8 +610,8 @@ impl LoudnessFilter {
         }
         let ch = channels.max(1) as usize;
         if ch == 2 {
-            let mut chunks = samples.chunks_exact_mut(2);
-            for chunk in chunks.by_ref() {
+            let (frames, rest) = samples.as_chunks_mut::<2>();
+            for chunk in frames {
                 let (l, r) = self.low_shelf.process_stereo(chunk[0], chunk[1]);
                 let (l, r) = self.high_shelf.process_stereo(l, r);
                 chunk[0] = l;
@@ -615,7 +620,7 @@ impl LoudnessFilter {
             // A malformed/odd-length stereo buffer would otherwise drop
             // its trailing lone sample. Run it through the mono path so
             // no sample escapes the shelves unfiltered.
-            if let [last] = chunks.into_remainder() {
+            if let [last] = rest {
                 let v = self.low_shelf.process_mono(*last);
                 *last = self.high_shelf.process_mono(v);
             }
@@ -734,8 +739,8 @@ fn apply_balance(samples: &mut [f32], channels: u16, balance: f32) {
     // Skip the multiply when both gains are essentially 1.0 — never
     // happens at the new center (gains ≈ 0.707), so the only "no-op"
     // path is the channel-count guard above.
-    let mut chunks = samples.chunks_exact_mut(2);
-    for chunk in chunks.by_ref() {
+    let (frames, rest) = samples.as_chunks_mut::<2>();
+    for chunk in frames {
         chunk[0] *= left_gain;
         chunk[1] *= right_gain;
     }
@@ -744,7 +749,7 @@ fn apply_balance(samples: &mut [f32], channels: u16, balance: f32) {
     // centered (mono) sample: apply the geometric mean of the two gains
     // so its loudness tracks the pan law without favouring a side. This
     // keeps the sample in the stream instead of silently dropping it.
-    if let [last] = chunks.into_remainder() {
+    if let [last] = rest {
         *last *= (left_gain * right_gain).sqrt();
     }
 }
@@ -868,7 +873,7 @@ pub fn audio_thread_main_symphonia(
                     // current track approaches its end.
                     let already_queued = next_pending.as_ref().is_some_and(|p| p.path == path);
                     let already_playing = current_track.as_ref().is_some_and(|t| t.path == path);
-                    if !already_queued && !already_playing {
+                    if !already_queued && !already_playing && !engine_state.stop_after_current {
                         // load_for_preload: do NOT touch the equalizer's
                         // sample rate. Changing it now would corrupt the
                         // currently-playing track's filter state. We only
@@ -900,6 +905,7 @@ pub fn audio_thread_main_symphonia(
                 AudioCommand::PlayUrl(url) => {
                     // Tear down any active playback / queue / ICY
                     // publisher before we open the new stream.
+                    engine_state.stop_after_current = false;
                     playback = None;
                     next_pending = None;
                     current_icy = None;
@@ -1013,6 +1019,7 @@ pub fn audio_thread_main_symphonia(
                     // Stop current playback. A user-initiated Play
                     // invalidates any preloaded next track — the new path
                     // may have nothing to do with what was queued.
+                    engine_state.stop_after_current = false;
                     playback = None;
                     next_pending = None;
                     current_icy = None;
@@ -1091,6 +1098,7 @@ pub fn audio_thread_main_symphonia(
                     }
                 }
                 AudioCommand::Stop => {
+                    engine_state.stop_after_current = false;
                     playback = None;
                     current_track = None;
                     next_pending = None;
@@ -1263,6 +1271,14 @@ pub fn audio_thread_main_symphonia(
                 AudioCommand::SetRepeatMode(mode) => {
                     engine_state.repeat_mode = mode;
                     let _ = event_tx.send(AudioEvent::RepeatModeUpdated(mode));
+                }
+                AudioCommand::SetStopAfterCurrent(armed) => {
+                    engine_state.stop_after_current = armed;
+                    if armed {
+                        // A preloaded next track would otherwise be
+                        // crossfaded in or gapless-swapped at EOS.
+                        next_pending = None;
+                    }
                 }
                 AudioCommand::SetShuffle(enabled) => {
                     engine_state.shuffle_enabled = enabled;
@@ -1517,7 +1533,15 @@ pub fn audio_thread_main_symphonia(
         }
 
         // Handle end of stream outside the borrow
-        if end_of_stream {
+        if end_of_stream && engine_state.stop_after_current {
+            // "Stop after current" beats repeat and gapless: halt here
+            // and let the app's `Finished` handler do the UI side.
+            engine_state.stop_after_current = false;
+            next_pending = None;
+            playback = None;
+            current_track = None;
+            let _ = event_tx.send(AudioEvent::Finished);
+        } else if end_of_stream {
             match engine_state.repeat_mode {
                 RepeatMode::One => {
                     // Restart current track if it exists. RepeatMode::One

@@ -297,7 +297,7 @@ impl MainMenu {
                                             Pos2::new(rect.min.x + 6.0 * scale, sep_y),
                                             Pos2::new(rect.max.x - 6.0 * scale, sep_y),
                                         ],
-                                        Stroke::new(1.0, Color32::from_rgb(80, 120, 60)),
+                                        Stroke::new(1.0_f32, Color32::from_rgb(80, 120, 60)),
                                     );
                                 }
 
@@ -385,7 +385,7 @@ impl MainMenu {
         ui.painter().rect_stroke(
             rect.shrink(0.5),
             0.0,
-            Stroke::new(1.0, Color32::from_rgb(120, 200, 80)),
+            Stroke::new(1.0_f32, Color32::from_rgb(120, 200, 80)),
         );
     }
 

@@ -412,9 +412,9 @@ fn render_skin_card(
 ) -> bool {
     let accent = theme.current;
     let stroke = if selected {
-        Stroke::new(2.0, accent)
+        Stroke::new(2.0_f32, accent)
     } else {
-        Stroke::new(1.0, theme.border)
+        Stroke::new(1.0_f32, theme.border)
     };
     let frame = Frame::group(ui.style())
         .stroke(stroke)
@@ -466,14 +466,14 @@ fn horizontal_rule(ui: &mut egui::Ui, color: Color32) {
             egui::Pos2::new(rect.left() + 4.0, y),
             egui::Pos2::new(rect.right() - 4.0, y),
         ],
-        Stroke::new(1.0, color),
+        Stroke::new(1.0_f32, color),
     );
     ui.add_space(1.0);
 }
 
 fn section_frame<R>(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui) -> R) -> R {
     Frame::group(ui.style())
-        .stroke(Stroke::new(1.0, Color32::from_gray(60)))
+        .stroke(Stroke::new(1.0_f32, Color32::from_gray(60)))
         .inner_margin(Margin::same(8.0))
         .show(ui, content)
         .inner

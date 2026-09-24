@@ -383,10 +383,13 @@ impl EqualizerWindow {
         // Layer the outline twice (1 px + 3 px) for a soft halo look
         // without needing actual blur — egui's CPU painter doesn't
         // ship one.
+        ui.painter().rect_stroke(
+            rect.expand(2.0 * scale),
+            3.0,
+            egui::Stroke::new(3.0_f32, glow),
+        );
         ui.painter()
-            .rect_stroke(rect.expand(2.0 * scale), 3.0, egui::Stroke::new(3.0, glow));
-        ui.painter()
-            .rect_stroke(rect, 2.0, egui::Stroke::new(1.5, glow));
+            .rect_stroke(rect, 2.0, egui::Stroke::new(1.5_f32, glow));
     }
 
     pub(super) fn render_presets_menu(
@@ -461,7 +464,7 @@ impl EqualizerWindow {
                 area_ui.painter().rect_stroke(
                     menu_rect,
                     0.0,
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 200, 80)),
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(120, 200, 80)),
                 );
 
                 for (i, row) in rows.iter().enumerate() {

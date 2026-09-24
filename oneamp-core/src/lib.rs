@@ -129,6 +129,12 @@ pub enum AudioCommand {
     SetMute(bool),
     /// Set repeat mode
     SetRepeatMode(RepeatMode),
+    /// Arm/disarm "stop after current track". While armed, the engine
+    /// drops any preloaded next track, ignores `QueueNext`, and at end of
+    /// stream emits `Finished` instead of repeating, gapless-swapping or
+    /// requesting the next track. Consumed at end of stream; cleared by
+    /// `Play`, `PlayUrl` and `Stop`.
+    SetStopAfterCurrent(bool),
     /// Enable/disable shuffle mode
     SetShuffle(bool),
     /// Set equalizer enabled state

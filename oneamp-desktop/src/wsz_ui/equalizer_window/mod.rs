@@ -14,7 +14,7 @@ pub const EQ_GAIN_MAX_DB: f32 = 20.0;
 /// Vertical pixel travel for the slider thumb within a 14×63 track. The thumb
 /// is 11 px tall, so the thumb's top can sit anywhere in 0..(63-11)=52 px.
 pub(super) const TRACK_HEIGHT: u32 = 63;
-const THUMB_HEIGHT: u32 = 11;
+pub(super) const THUMB_HEIGHT: u32 = 11;
 pub(super) const SLIDER_TRAVEL: u32 = TRACK_HEIGHT - THUMB_HEIGHT;
 pub(super) const SLIDER_TOP_Y: u32 = 38;
 
@@ -97,6 +97,9 @@ pub struct EqualizerWindow {
     pub(super) auto: bool,
     /// Index of the band currently being dragged (10 = preamp).
     pub(super) dragging: Option<usize>,
+    /// Where the pointer grabbed the thumb, in skin px below its top
+    /// edge. Kept for the whole drag so clicking a thumb doesn't move it.
+    pub(super) drag_grab_y: f32,
     /// Visual press state for the EQ/AUTO/PRESETS buttons.
     pub(super) pressed_button: Option<EqButton>,
     /// True when the presets dropdown is open.
@@ -210,6 +213,7 @@ impl EqualizerWindow {
             enabled,
             auto: false,
             dragging: None,
+            drag_grab_y: 0.0,
             pressed_button: None,
             presets_menu_open: false,
             mouse_was_pressed: false,
@@ -547,6 +551,14 @@ pub(super) fn db_to_thumb_offset(gain_db: f32) -> u32 {
     ((1.0 - normalized) * SLIDER_TRAVEL as f32).round() as u32
 }
 
+/// Inverse of `db_to_thumb_offset`: thumb top offset (skin px, may be
+/// fractional) → dB. Shared by drag input so painting and interaction use
+/// the same 52 px travel.
+pub(super) fn thumb_offset_to_db(offset: f32) -> f32 {
+    let normalized = (offset / SLIDER_TRAVEL as f32).clamp(0.0, 1.0);
+    EQ_GAIN_MAX_DB - normalized * (EQ_GAIN_MAX_DB - EQ_GAIN_MIN_DB)
+}
+
 /// Map a dB gain to the eqmain.bmp band-fill atlas frame coords. Returns
 /// `None` for gains in the deadband around 0 dB (no fill needed). Negative
 /// gains live at y=164, positive at y=229; both have 14 frames spaced
@@ -622,7 +634,7 @@ pub(super) fn sample_spline(bands: &[f32; 10], t: f32) -> f32 {
 /// the curve color. Falls back to Winamp's classic green when the stripe is
 /// missing or fully transparent.
 pub(super) fn spline_color(stripe: &oneamp_core::wsz::bitmap::BitmapRegion) -> egui::Color32 {
-    for chunk in stripe.data.chunks_exact(4) {
+    for chunk in stripe.data.as_chunks::<4>().0 {
         if chunk[3] > 0 {
             return egui::Color32::from_rgb(chunk[0], chunk[1], chunk[2]);
         }
@@ -641,6 +653,14 @@ mod tests {
         // 0 dB sits in the middle.
         let mid = db_to_thumb_offset(0.0);
         assert!((mid as i32 - (SLIDER_TRAVEL as i32 / 2)).abs() <= 1);
+    }
+
+    #[test]
+    fn thumb_offset_round_trips() {
+        for db in [-20.0, -10.0, 0.0, 10.0, 20.0] {
+            let back = thumb_offset_to_db(db_to_thumb_offset(db) as f32);
+            assert!((back - db).abs() < 0.5, "{db} -> {back}");
+        }
     }
 
     #[test]

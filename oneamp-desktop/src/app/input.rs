@@ -120,15 +120,7 @@ impl OneAmpApp {
                 ));
                 self.mark_dirty();
             }
-            MainWindowAction::ToggleStopAfterCurrent => {
-                self.stop_after_current = !self.stop_after_current;
-                let msg = if self.stop_after_current {
-                    "Will stop after current track"
-                } else {
-                    "Stop after current — cancelled"
-                };
-                self.push_toast(msg, std::time::Duration::from_millis(1800));
-            }
+            MainWindowAction::ToggleStopAfterCurrent => self.toggle_stop_after_current(),
             MainWindowAction::ToggleResumeLongFiles => {
                 self.config.resume_long_files = !self.config.resume_long_files;
                 let msg = if self.config.resume_long_files {
@@ -463,13 +455,7 @@ impl OneAmpApp {
                 && !i.modifiers.ctrl
                 && !i.modifiers.alt
             {
-                self.stop_after_current = !self.stop_after_current;
-                let msg = if self.stop_after_current {
-                    "Will stop after current track"
-                } else {
-                    "Stop after current — cancelled"
-                };
-                self.push_toast(msg, std::time::Duration::from_millis(1800));
+                self.toggle_stop_after_current();
             }
 
             // (V is the Winamp Stop hotkey — see the Z X C V B block
@@ -728,7 +714,7 @@ impl OneAmpApp {
         painter.rect_stroke(
             panel,
             2.0,
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 220, 100)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(60, 220, 100)),
         );
 
         // Title strip at the top of the panel.

@@ -1,6 +1,7 @@
 use super::{
     AUTO_BUTTON, EQ_BUTTON, EQ_GAIN_MAX_DB, EQ_GAIN_MIN_DB, EqualizerAction, EqualizerWindow,
-    PRESETS_BUTTON, SHADE_RAIL, SLIDER_TOP_Y, ShadeDrag, SkinRect, TRACK_HEIGHT, TRACK_X,
+    PRESETS_BUTTON, SHADE_RAIL, SLIDER_TOP_Y, ShadeDrag, SkinRect, THUMB_HEIGHT, TRACK_HEIGHT,
+    TRACK_X, db_to_thumb_offset, thumb_offset_to_db,
 };
 use egui::{Pos2, Rect};
 use oneamp_core::eqf;
@@ -176,9 +177,23 @@ impl EqualizerWindow {
             } else if presets_rect.contains(mouse_pos) {
                 self.presets_menu_open = !self.presets_menu_open;
             } else if !self.presets_menu_open {
-                for slider_idx in 0..TRACK_X.len() {
+                for (slider_idx, &track_x) in TRACK_X.iter().enumerate() {
                     if self.slider_hit_rect(slider_idx, offset).contains(mouse_pos) {
                         self.dragging = Some(slider_idx);
+                        // Grabbing the thumb keeps the grab point; a click
+                        // elsewhere on the track centers the thumb there.
+                        let scale = self.renderer.get_scale();
+                        let track_top = self
+                            .renderer
+                            .skin_to_screen(track_x, SLIDER_TOP_Y, offset)
+                            .y;
+                        let thumb_top = db_to_thumb_offset(self.value_for(slider_idx)) as f32;
+                        let in_thumb = (mouse_pos.y - track_top) / scale - thumb_top;
+                        self.drag_grab_y = if (0.0..=THUMB_HEIGHT as f32).contains(&in_thumb) {
+                            in_thumb
+                        } else {
+                            THUMB_HEIGHT as f32 / 2.0
+                        };
                         self.apply_drag(slider_idx, mouse_pos, offset, audio_engine);
                         break;
                     }
@@ -219,9 +234,8 @@ impl EqualizerWindow {
         let track_top_screen =
             self.renderer
                 .skin_to_screen(TRACK_X[slider_idx], SLIDER_TOP_Y, offset);
-        let local_y = (mouse_pos.y - track_top_screen.y).clamp(0.0, TRACK_HEIGHT as f32 * scale);
-        let normalized = local_y / (TRACK_HEIGHT as f32 * scale);
-        let gain = EQ_GAIN_MAX_DB - normalized * (EQ_GAIN_MAX_DB - EQ_GAIN_MIN_DB);
+        let thumb_top = (mouse_pos.y - track_top_screen.y) / scale - self.drag_grab_y;
+        let gain = thumb_offset_to_db(thumb_top);
 
         if slider_idx == 0 {
             self.preamp = gain.clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);

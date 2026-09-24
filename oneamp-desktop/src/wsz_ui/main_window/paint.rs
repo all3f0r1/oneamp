@@ -435,7 +435,7 @@ impl WszMainWindow {
 
         ui.painter().rect_filled(menu_rect, 0.0, theme.bg);
         ui.painter()
-            .rect_stroke(menu_rect, 0.0, egui::Stroke::new(1.0, theme.border));
+            .rect_stroke(menu_rect, 0.0, egui::Stroke::new(1.0_f32, theme.border));
 
         let mut picked: Option<MainWindowAction> = None;
         for (i, (label, action, checked)) in rows.iter().enumerate() {
@@ -485,7 +485,7 @@ impl WszMainWindow {
                     Pos2::new(menu_x + 4.0 * scale, y),
                     Pos2::new(menu_x + menu_w - 4.0 * scale, y),
                 ],
-                egui::Stroke::new(1.0, theme.border),
+                egui::Stroke::new(1.0_f32, theme.border),
             );
         }
 

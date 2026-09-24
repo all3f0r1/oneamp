@@ -142,6 +142,21 @@ impl OneAmpApp {
         self.stop_after_current = false;
     }
 
+    /// Arm/disarm "stop after current". The engine gets the flag too so
+    /// it can refuse gapless swaps, crossfades and repeat restarts —
+    /// none of those emit `Finished`, which is where the UI side stops.
+    pub(super) fn toggle_stop_after_current(&mut self) {
+        self.stop_after_current = !self.stop_after_current;
+        self.audio
+            .send_command(AudioCommand::SetStopAfterCurrent(self.stop_after_current));
+        let msg = if self.stop_after_current {
+            "Will stop after current track"
+        } else {
+            "Stop after current — cancelled"
+        };
+        self.push_toast(msg, std::time::Duration::from_millis(1800));
+    }
+
     /// Process audio events from engine. Returns the collected events so
     /// they can be forwarded to windows that need playback state.
     pub(super) fn process_audio_events(&mut self) -> Vec<oneamp_core::AudioEvent> {
@@ -421,10 +436,13 @@ impl OneAmpApp {
             self.resume.upsert(&path, current);
         }
         self.last_resume_save_at = Some(now);
-        // We don't fsync per upsert — the in-memory store is the live
-        // truth; the JSON is flushed on Finished (next iter), Stop,
-        // and on_exit. A crash mid-playback loses at most ~15 s of
-        // progress, which is the throttle floor.
+        // Write through on every throttled tick so a crash loses at most
+        // SAVE_INTERVAL_SECS of progress (the file is a few hundred bytes).
+        if let Some(path) = crate::resume_store::default_path()
+            && let Err(e) = self.resume.save(&path)
+        {
+            eprintln!("Failed to save resume store: {}", e);
+        }
     }
 
     /// Send `AudioCommand::QueueNext` for the upcoming playlist track when

@@ -22,4 +22,13 @@ ignore = [
     "RUSTSEC-2025-0119", # number_prefix unmaintained
     "RUSTSEC-2024-0436", # paste unmaintained
     "RUSTSEC-2024-0370", # proc-macro-error unmaintained
+
+    # quick-xml < 0.41 parser DoS (triaged 2026-09-24). Old copies are
+    # pinned by the egui 0.30 fork (accesskit_unix → zbus_xml 0.30) and by
+    # notify-rust's Windows backend (tauri-winrt-notification, 0.37). They
+    # only parse D-Bus introspection from the local session bus and toast
+    # XML we build ourselves — never remote input. Drop once egui moves.
+    "RUSTSEC-2026-0194", # quick-xml duplicate-attribute quadratic time
+    "RUSTSEC-2026-0195", # quick-xml NsReader unbounded allocation
+    "RUSTSEC-2026-0192", # ttf-parser unmaintained (via egui's ab_glyph)
 ]

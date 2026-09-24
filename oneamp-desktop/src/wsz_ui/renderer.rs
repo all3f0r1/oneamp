@@ -55,7 +55,12 @@ impl WszRenderer {
         pos: Pos2,
         key_suffix: &str,
     ) -> Rect {
-        let key = format!("region_{}_{}", key_suffix, region.x);
+        // Full source rect in the key: e.g. EQ fills share x across the
+        // positive (y=229) and negative (y=164) rows.
+        let key = format!(
+            "region_{}_{}_{}_{}x{}",
+            key_suffix, region.x, region.y, region.width, region.height
+        );
         let texture = self.texture_cache.get_or_create_region(
             ui.ctx(),
             &key,

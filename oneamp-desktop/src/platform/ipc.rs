@@ -70,10 +70,12 @@ fn socket_name() -> io::Result<interprocess::local_socket::Name<'static>> {
 /// "Not reachable" covers both *no listener bound* and *socket file
 /// exists but no listener* (a previous crash left it behind) — both
 /// surface as a connect error, and we treat both as "we are the primary".
+///
+/// An empty `paths` still connects: a bare relaunch from the desktop
+/// launcher must not spawn a second instance (it would later overwrite
+/// the first one's config with stale values). The primary treats an
+/// empty batch as "raise your window".
 pub fn try_forward(paths: &[PathBuf]) -> bool {
-    if paths.is_empty() {
-        return false;
-    }
     let Ok(name) = socket_name() else {
         return false;
     };
@@ -119,9 +121,7 @@ fn listener_loop(listener: interprocess::local_socket::Listener, tx: Sender<Vec<
         // if the backend can't honor a timeout, we still fall back to a
         // blocking read rather than refusing the connection outright.
         let _ = stream.set_recv_timeout(Some(IPC_READ_TIMEOUT));
-        if let Ok(paths) = read_paths(&mut stream)
-            && !paths.is_empty()
-        {
+        if let Ok(paths) = read_paths(&mut stream) {
             let _ = tx.send(paths);
         }
     }

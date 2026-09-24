@@ -14,6 +14,9 @@
 
 use super::{OneAmpApp, visualizer_to_config};
 
+/// Backoff before retrying a failed config write.
+const CONFIG_SAVE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
+
 impl OneAmpApp {
     /// Mark the live config as having unsaved changes. The next update
     /// tick that finds `config_dirty_since` older than `CONFIG_SAVE_DEBOUNCE`
@@ -61,10 +64,26 @@ impl OneAmpApp {
             visualizer_to_config(self.windows.main_window_mut().visualizer_mode());
         self.config.show_remaining = self.windows.main_window_mut().show_remaining();
 
-        if let Err(e) = self.config.save() {
-            eprintln!("Failed to save config: {}", e);
+        match self.config.save() {
+            Ok(()) => {
+                self.config_dirty_since = None;
+                self.config_save_failed = false;
+            }
+            Err(e) => {
+                // `self.config` already mirrors live state, so drift
+                // detection would never re-flag it — keep the dirty mark
+                // and push it into the future to retry with a backoff.
+                eprintln!("Failed to save config: {}", e);
+                self.config_dirty_since = Some(std::time::Instant::now() + CONFIG_SAVE_RETRY_DELAY);
+                if !self.config_save_failed {
+                    self.config_save_failed = true;
+                    self.push_toast(
+                        "Settings could not be saved — retrying",
+                        std::time::Duration::from_millis(3000),
+                    );
+                }
+            }
         }
-        self.config_dirty_since = None;
     }
 
     /// Compare every persistable live-state field against what's stored in
@@ -132,7 +151,10 @@ impl OneAmpApp {
         if self.config.equalizer.current_preset != live_preset {
             changed = true;
         }
-        if changed {
+        // Only start the debounce clock on the first divergence. Calling
+        // `mark_dirty()` every frame would keep pushing the deadline
+        // forward and the flush in `update` would never fire.
+        if changed && self.config_dirty_since.is_none() {
             self.mark_dirty();
         }
     }

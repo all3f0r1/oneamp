@@ -40,7 +40,7 @@ impl BitmapAtlas {
     }
 
     pub fn apply_transparency(&mut self) {
-        for chunk in self.data.chunks_exact_mut(4) {
+        for chunk in self.data.as_chunks_mut::<4>().0 {
             if is_magenta_key(chunk[0], chunk[1], chunk[2]) {
                 chunk[3] = 0;
             }
@@ -52,7 +52,7 @@ impl BitmapAtlas {
     /// 2.x skins paint glyphs as white text on a dark blue field rather than
     /// the standard magenta).
     pub fn apply_color_key(&mut self, key: [u8; 3]) {
-        for chunk in self.data.chunks_exact_mut(4) {
+        for chunk in self.data.as_chunks_mut::<4>().0 {
             if chunk[0] == key[0] && chunk[1] == key[1] && chunk[2] == key[2] {
                 chunk[3] = 0;
             }
@@ -65,7 +65,7 @@ impl BitmapAtlas {
     pub fn dominant_opaque_color(&self) -> Option<[u8; 3]> {
         use std::collections::HashMap;
         let mut counts: HashMap<[u8; 3], u32> = HashMap::new();
-        for chunk in self.data.chunks_exact(4) {
+        for chunk in self.data.as_chunks::<4>().0 {
             if chunk[3] == 0 {
                 continue;
             }

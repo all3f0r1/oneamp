@@ -241,8 +241,8 @@ pub fn parse_cur(data: &[u8]) -> Result<CursorImage> {
     // 32bpp cursors sometimes ship with all-zero alpha (the AND mask was
     // meant to drive transparency); detect and fall back to "fully
     // opaque" so the cursor isn't silently invisible.
-    if bit_count == 32 && rgba.chunks_exact(4).all(|p| p[3] == 0) {
-        for chunk in rgba.chunks_exact_mut(4) {
+    if bit_count == 32 && rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 0) {
+        for chunk in rgba.as_chunks_mut::<4>().0 {
             chunk[3] = 255;
         }
     }

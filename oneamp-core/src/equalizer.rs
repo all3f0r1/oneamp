@@ -478,9 +478,7 @@ impl Equalizer {
     /// per-band settings; leaves enabled/sample-rate intact. The
     /// transition to flat is smoothed.
     pub fn reset_all_bands(&mut self) {
-        for gain in &mut self.gains {
-            *gain = 0.0;
-        }
+        self.gains.fill(0.0);
         self.update_filters();
     }
 
@@ -576,7 +574,7 @@ impl Equalizer {
         if !self.enabled {
             return;
         }
-        for chunk in samples.chunks_exact_mut(2) {
+        for chunk in samples.as_chunks_mut::<2>().0 {
             let mut l = chunk[0];
             let mut r = chunk[1];
             for band in &mut self.bands {
@@ -724,7 +722,7 @@ mod tests {
         // so the bands are in their target state and the IIR history
         // has fully populated.
         let mut samples = vec![0.0_f32; 2 * 1024];
-        for chunk in samples.chunks_exact_mut(2) {
+        for chunk in samples.as_chunks_mut::<2>().0 {
             chunk[0] = 1.0;
             chunk[1] = -1.0;
         }

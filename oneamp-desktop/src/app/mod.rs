@@ -383,6 +383,8 @@ pub struct OneAmpApp {
     /// crashes far better than the previous on_exit-only save, while
     /// staying off the hot path during slider drags.
     config_dirty_since: Option<std::time::Instant>,
+    /// Last config write failed; suppresses repeat toasts while retrying.
+    config_save_failed: bool,
 
     /// User-driven scale override in 0.25 steps from 1.0 to 4.0 — `None`
     /// means follow the DPI heuristic. Mirrored from
@@ -703,6 +705,7 @@ impl OneAmpApp {
             output_devices_cache: Vec::new(),
             output_devices_refreshed_at: None,
             config_dirty_since: None,
+            config_save_failed: false,
             user_scale,
             scale_dirty: user_scale.is_some(),
             sleep_timer_deadline: None,
@@ -858,7 +861,7 @@ impl OneAmpApp {
                 ui.painter().rect_stroke(
                     rect,
                     4.0,
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 220, 100)),
+                    egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(60, 220, 100)),
                 );
                 ui.allocate_new_ui(
                     egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(8.0, 4.0))),
@@ -955,7 +958,7 @@ impl OneAmpApp {
             3.0,
             egui::Color32::from_rgba_unmultiplied(15, 15, 15, 220),
         );
-        painter.rect_stroke(chip, 3.0, egui::Stroke::new(1.0, accent));
+        painter.rect_stroke(chip, 3.0, egui::Stroke::new(1.0_f32, accent));
         painter.galley(
             egui::pos2(chip.min.x + pad_x, chip.min.y + pad_y),
             galley,
@@ -1019,7 +1022,7 @@ impl OneAmpApp {
             chip,
             3.0,
             egui::Stroke::new(
-                1.0,
+                1.0_f32,
                 egui::Color32::from_rgba_unmultiplied(60, 220, 100, alpha),
             ),
         );
@@ -1226,6 +1229,13 @@ impl eframe::App for OneAmpApp {
             }
         }
         for batch in batches {
+            // Empty batch = the user relaunched OneAmp with no files;
+            // bring the existing window forward instead.
+            if batch.is_empty() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                continue;
+            }
             // IPC handoff = a secondary `oneamp <files>` invocation, almost
             // always triggered by the user double-clicking a file in their
             // OS file manager. Force playback of the first new track so the
@@ -1412,7 +1422,7 @@ impl eframe::App for OneAmpApp {
             painter.rect_stroke(
                 rect.shrink(1.5),
                 0.0,
-                egui::Stroke::new(3.0, egui::Color32::from_rgb(60, 220, 100)),
+                egui::Stroke::new(3.0_f32, egui::Color32::from_rgb(60, 220, 100)),
             );
         }
 
