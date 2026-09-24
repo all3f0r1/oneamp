@@ -22,6 +22,10 @@ impl WszRenderer {
         self.scale
     }
 
+    pub fn set_scale(&mut self, scale: f32) {
+        self.scale = scale;
+    }
+
     pub fn render_component(
         &mut self,
         ui: &mut Ui,

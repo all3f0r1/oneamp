@@ -283,6 +283,15 @@ impl PlaylistWindow {
         // scrolled past the end with a sudden empty view.
         let total_h = entries.len() as f32 * row_h_screen;
         let max_offset = (total_h - list_rect.height()).max(0.0);
+        if let Some(idx) = self.ensure_visible.take() {
+            let top = idx as f32 * row_h_screen;
+            let bottom = top + row_h_screen;
+            if top < self.scroll_offset {
+                self.scroll_offset = top;
+            } else if bottom > self.scroll_offset + list_rect.height() {
+                self.scroll_offset = bottom - list_rect.height();
+            }
+        }
         self.scroll_offset = self.scroll_offset.clamp(0.0, max_offset);
 
         let visible_rows = (list_rect.height() / row_h_screen).ceil() as usize + 1;

@@ -73,7 +73,7 @@ impl Session {
 /// flagged: their availability is only known by connecting.
 pub fn is_unavailable(path: &Path) -> bool {
     let s = path.to_string_lossy();
-    !(s.starts_with("http://") || s.starts_with("https://")) && !path.exists()
+    !(s.starts_with("http://") || s.starts_with("https://") || path.exists())
 }
 
 #[cfg(test)]

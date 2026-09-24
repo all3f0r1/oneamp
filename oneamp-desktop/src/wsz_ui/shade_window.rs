@@ -16,6 +16,11 @@ pub struct ShadeWindow {
 }
 
 impl ShadeWindow {
+    /// Points per skin pixel.
+    pub fn set_scale(&mut self, scale: f32) {
+        self.renderer.set_scale(scale);
+    }
+
     pub fn new(skin: WszSkin, scale: f32) -> Self {
         Self {
             renderer: WszRenderer::new(skin, scale),

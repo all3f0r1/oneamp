@@ -1,9 +1,9 @@
 use super::{
-    AUTO_BUTTON, EQ_BUTTON, EQ_GAIN_MAX_DB, EQ_GAIN_MIN_DB, EqButton, EqualizerWindow,
-    PRESETS_BUTTON, PresetRow, SHADE_BAL_DEADZONE, SHADE_BAL_RAIL_W, SHADE_BAL_RAIL_X,
-    SHADE_THUMB_Y, SHADE_VOL_RAIL_W, SHADE_VOL_RAIL_X, SLIDER_TOP_Y, TRACK_HEIGHT, TRACK_X,
-    auto_sprite_coords, band_fill_frame, db_to_thumb_offset, eq_sprite_coords, sample_spline,
-    spline_color,
+    AUTO_BUTTON, EQ_BUTTON, EQ_GAIN_MAX_DB, EQ_GAIN_MIN_DB, EqButton, EqualizerAction,
+    EqualizerWindow, PRESETS_BUTTON, PresetRow, SHADE_BAL_DEADZONE, SHADE_BAL_RAIL_W,
+    SHADE_BAL_RAIL_X, SHADE_THUMB_Y, SHADE_VOL_RAIL_W, SHADE_VOL_RAIL_X, SLIDER_TOP_Y,
+    TRACK_HEIGHT, TRACK_X, auto_sprite_coords, band_fill_frame, db_to_thumb_offset,
+    eq_sprite_coords, sample_spline, spline_color,
 };
 use egui::{Pos2, Rect, Sense, Vec2};
 use oneamp_core::equalizer_presets::BuiltinPresets;
@@ -392,6 +392,63 @@ impl EqualizerWindow {
             .rect_stroke(rect, 2.0, egui::Stroke::new(1.5_f32, glow));
     }
 
+    /// While a slider is hovered or dragged, show its exact frequency
+    /// and gain over the curve display, so the skin's approximate
+    /// labels aren't the only reference.
+    pub(super) fn render_band_readout(&self, ui: &mut egui::Ui, offset: Pos2) {
+        if self.presets_menu_open {
+            return;
+        }
+        let slider = self.dragging.or_else(|| {
+            let p = ui.ctx().pointer_hover_pos()?;
+            (0..TRACK_X.len()).find(|&i| {
+                super::SkinRect {
+                    x: TRACK_X[i],
+                    y: SLIDER_TOP_Y,
+                    w: 14,
+                    h: TRACK_HEIGHT,
+                }
+                .screen_rect(&self.renderer, offset)
+                .contains(p)
+            })
+        });
+        let Some(slider) = slider else {
+            return;
+        };
+        let name = if slider == 0 {
+            "Preamp".to_string()
+        } else {
+            let hz = oneamp_core::EQ_FREQUENCIES[slider - 1];
+            if hz >= 1000.0 {
+                format!("{} kHz", hz / 1000.0)
+            } else {
+                format!("{hz} Hz")
+            }
+        };
+        let text = format!("{name}  {:+.1} dB", self.value_for(slider));
+        // The curve display strip at (86,17) 113×19.
+        let rect = super::SkinRect {
+            x: 86,
+            y: 17,
+            w: 113,
+            h: 19,
+        }
+        .screen_rect(&self.renderer, offset);
+        let painter = ui.painter();
+        painter.rect_filled(
+            rect,
+            0.0,
+            egui::Color32::from_rgba_unmultiplied(0, 0, 0, 220),
+        );
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            text,
+            egui::FontId::monospace(8.0 * self.renderer.get_scale()),
+            egui::Color32::from_rgb(0, 220, 80),
+        );
+    }
+
     pub(super) fn render_presets_menu(
         &mut self,
         ui: &mut egui::Ui,
@@ -420,6 +477,8 @@ impl EqualizerWindow {
         rows.push(PresetRow::LoadEqf);
         rows.push(PresetRow::SaveEqf);
         rows.push(PresetRow::SaveAsUserPreset);
+        rows.push(PresetRow::SaveAutoPreset);
+        rows.push(PresetRow::RemoveAutoPreset);
         for p in presets.iter() {
             rows.push(PresetRow::Builtin(p));
         }
@@ -481,6 +540,8 @@ impl EqualizerWindow {
                         PresetRow::LoadEqf => "Load .eqf…",
                         PresetRow::SaveEqf => "Save as .eqf…",
                         PresetRow::SaveAsUserPreset => "Save as preset…",
+                        PresetRow::SaveAutoPreset => "Auto-load for this track",
+                        PresetRow::RemoveAutoPreset => "Remove track auto-load",
                         PresetRow::Builtin(p) => p.name.as_str(),
                         PresetRow::User(p) => p.name.as_str(),
                     };
@@ -561,7 +622,13 @@ impl EqualizerWindow {
                     // PresetManager + modal name dialog. The flag is
                     // drained from `show()` and turned into
                     // `EqualizerAction::SaveAsUserPreset`.
-                    self.pending_save_as_user_preset = true;
+                    self.pending_action = Some(EqualizerAction::SaveAsUserPreset);
+                }
+                PresetRow::SaveAutoPreset => {
+                    self.pending_action = Some(EqualizerAction::SaveAutoPreset);
+                }
+                PresetRow::RemoveAutoPreset => {
+                    self.pending_action = Some(EqualizerAction::RemoveAutoPreset);
                 }
                 PresetRow::Builtin(preset) => {
                     apply_preset(self, preset);

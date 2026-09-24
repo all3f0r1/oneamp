@@ -88,6 +88,7 @@ impl OneAmpApp {
                 self.playlist.invert_selection();
             }
             PlaylistAction::SortByTitle => {
+                self.remember_for_undo();
                 // `sort_by_title()` now just delegates to
                 // `Playlist::sort_by(SortOrder::Title)`, which is the
                 // canonical sort: current track, queue, history,
@@ -100,6 +101,7 @@ impl OneAmpApp {
                 self.playlist.sort_by_title();
             }
             PlaylistAction::MoveTrack { from, to } => {
+                self.remember_for_undo();
                 self.playlist.move_entry(from, to);
             }
             PlaylistAction::QueueTrack(idx) => {
@@ -123,6 +125,7 @@ impl OneAmpApp {
                 }
             }
             PlaylistAction::RemoveSelected => {
+                self.remember_for_undo();
                 // Remove all selected tracks. Iterate descending so each
                 // removal doesn't shift later indices out from under us
                 // (remove_track already adjusts the set, but doing it
@@ -139,6 +142,7 @@ impl OneAmpApp {
                 }
             }
             PlaylistAction::RemoveAt(idx) => {
+                self.remember_for_undo();
                 self.playlist.remove_track(idx);
             }
             PlaylistAction::EditTags(idx) => {
@@ -162,6 +166,7 @@ impl OneAmpApp {
                 }
             }
             PlaylistAction::Clear => {
+                self.remember_for_undo();
                 self.playlist.clear();
                 self.audio.send_command(AudioCommand::Stop);
             }
@@ -195,6 +200,28 @@ impl OneAmpApp {
                     }
                 }
             }
+        }
+    }
+
+    /// Snapshot the playlist before a destructive edit (remove, clear,
+    /// reorder, replace) so Ctrl+Z can bring it back.
+    pub(super) fn remember_for_undo(&mut self) {
+        const UNDO_DEPTH: usize = 20;
+        if self.undo.len() == UNDO_DEPTH {
+            self.undo.remove(0);
+        }
+        self.undo.push(self.playlist.clone());
+    }
+
+    /// Restore the playlist as it was before the last destructive edit.
+    /// Playback isn't touched.
+    pub(super) fn undo_playlist(&mut self) {
+        match self.undo.pop() {
+            Some(prev) => {
+                self.playlist = prev;
+                self.push_toast("Undone", std::time::Duration::from_millis(1200));
+            }
+            None => self.push_toast("Nothing to undo", std::time::Duration::from_millis(1200)),
         }
     }
 

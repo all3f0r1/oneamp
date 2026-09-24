@@ -9,6 +9,7 @@ mod config;
 mod dialog_util;
 mod format_dialog;
 mod i18n;
+mod jump_dialog;
 mod platform;
 mod platform_detection;
 mod preset_name_dialog;

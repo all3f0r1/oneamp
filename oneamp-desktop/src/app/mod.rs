@@ -5,9 +5,12 @@
 
 mod audio_loop;
 mod config_sync;
+mod eq_auto;
 mod input;
+pub(crate) mod keymap;
 mod menu;
 mod playlist_ops;
+mod preferences;
 mod skin;
 mod state;
 
@@ -282,13 +285,6 @@ pub struct OneAmpApp {
     /// the menu entry.
     always_on_top_applied: bool,
 
-    /// Whether we've re-confirmed the egui zoom-factor matches our chosen
-    /// integer render scale. `set_pixels_per_point` takes effect at the
-    /// start of the next pass, so the first `update` tick still sees the
-    /// OS-driven default; we re-assert on that frame so the window settles
-    /// on the right physical size as early as possible.
-    render_scale_applied: bool,
-
     /// Receiver fed by the single-instance IPC listener. Each batch is a
     /// `Vec<PathBuf>` that a secondary `oneamp <files>` invocation handed
     /// off to us. `None` when single-instance setup failed at startup —
@@ -311,6 +307,21 @@ pub struct OneAmpApp {
     /// dismisses it. Renders on top of every sub-window, including the
     /// WSZ cursor layer.
     show_hotkeys: bool,
+    /// Resolved shortcut table for `config.key_profile`.
+    keymap: Vec<keymap::Binding>,
+    /// Keyboard cursor for Shift+arrow range selection in the playlist.
+    pl_cursor: Option<usize>,
+    jump_dialog: Option<crate::jump_dialog::JumpDialog>,
+    preferences_open: bool,
+    prefs_tab: preferences::PrefsTab,
+    /// User preset being renamed in Preferences: (old name, edit buffer).
+    prefs_rename: Option<(String, String)>,
+    /// Playlist states before destructive edits, most recent last.
+    undo: Vec<Playlist>,
+    /// Global EQ curve set aside while an AUTO preset plays.
+    eq_global_stash: Option<(Vec<f32>, f32)>,
+    /// Gains of the AUTO preset currently applied, if any.
+    eq_auto_applied: Option<Vec<f32>>,
 
     /// Cached cpal output device list, refreshed at most once per
     /// `OUTPUT_DEVICE_REFRESH_INTERVAL`. Enumerating devices is cheap
@@ -394,10 +405,6 @@ pub struct OneAmpApp {
     /// (the "Auto (DPI)" menu entry) re-applies whatever
     /// `pick_render_scale(native_ppp)` returns for the current display.
     user_scale: Option<f32>,
-    /// Whether we've pushed the user-scale override through this session.
-    /// Bumped on every change so the next update tick re-emits
-    /// `set_pixels_per_point` and `invalidate_viewport_cache`.
-    scale_dirty: bool,
 
     /// Active sleep-timer deadline, if any. `Some(t)` means we'll fade the
     /// volume out over `SLEEP_TIMER_FADE_SECS` ending at `t`, then send
@@ -544,12 +551,12 @@ impl OneAmpApp {
         // viewport then comes up at the size the user explicitly chose
         // last session instead of flashing the OS default.
         let (config, is_first_run) = AppConfig::load();
+        let keymap = keymap::bindings(config.key_profile);
 
         let native_ppp = cc.egui_ctx.native_pixels_per_point().unwrap_or(1.0);
         let render_scale = config
             .user_scale
             .unwrap_or_else(|| pick_render_scale(native_ppp));
-        cc.egui_ctx.set_pixels_per_point(render_scale);
 
         // Initialize audio controller
         let audio = AudioController::new();
@@ -605,7 +612,7 @@ impl OneAmpApp {
         let skin_font_data = skin.font_data.clone();
         let mut windows = WszWindowCoordinator::with_initial(
             &skin,
-            1.0,
+            render_scale / native_ppp,
             use_custom_chrome,
             &config.equalizer.gains,
             config.equalizer.preamp_db,
@@ -719,7 +726,6 @@ impl OneAmpApp {
             fonts_dirty: true,
             always_on_top,
             always_on_top_applied: false,
-            render_scale_applied: false,
             ipc_rx,
             pending_initial_files: initial_files,
             recent,
@@ -730,6 +736,15 @@ impl OneAmpApp {
             // splash / skin paint; network failure is silent).
             update_checker: UpdateChecker::spawn(),
             show_hotkeys: false,
+            keymap,
+            pl_cursor: None,
+            jump_dialog: None,
+            preferences_open: false,
+            prefs_tab: Default::default(),
+            prefs_rename: None,
+            undo: Vec::new(),
+            eq_global_stash: None,
+            eq_auto_applied: None,
             jump_last_char: None,
             jump_last_index: None,
             nul_progress: 0,
@@ -739,7 +754,6 @@ impl OneAmpApp {
             config_dirty_since: None,
             config_save_failed: false,
             user_scale,
-            scale_dirty: user_scale.is_some(),
             sleep_timer_deadline: None,
             sleep_timer_pre_volume: 0.0,
             sleep_timer_choice: None,
@@ -855,15 +869,19 @@ impl OneAmpApp {
             );
             return;
         }
+        self.save_preset_store();
+        self.push_toast(
+            format!("Saved preset \"{}\"", name),
+            std::time::Duration::from_millis(1800),
+        );
+    }
+
+    fn save_preset_store(&self) {
         if let Some(path) = user_presets_path()
             && let Err(e) = self.preset_manager.save(&path)
         {
             eprintln!("Failed to save preset store: {}", e);
         }
-        self.push_toast(
-            format!("Saved preset \"{}\"", name),
-            std::time::Duration::from_millis(1800),
-        );
     }
 
     /// Push an in-app toast. Replaces any active one — Snackbar
@@ -1173,7 +1191,6 @@ impl OneAmpApp {
             }
             WelcomeAction::ApplyScale(choice) => {
                 self.user_scale = choice;
-                self.scale_dirty = true;
                 self.mark_dirty();
             }
             WelcomeAction::ApplyLang(lang_cfg) => {
@@ -1256,36 +1273,19 @@ impl eframe::App for OneAmpApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Re-assert the integer render scale on the first frame. The
-        // `set_pixels_per_point` call in `new` queues for the next pass
-        // — by frame one egui has settled, and from here the
-        // `WszWindowCoordinator`'s per-frame `target_viewport_size` lock
-        // takes over. `egui-winit`'s `InnerSize` handler converts our
-        // 275×116 egui-unit target to render_scale × 275 physical pixels.
-        if !self.render_scale_applied
-            && let Some(native_ppp) = ctx.native_pixels_per_point()
-        {
+        // The WSZ windows carry the integer render scale themselves
+        // (physical px per skin px = user scale or ceil(native DPI));
+        // egui's zoom stays 1 so dialogs render at native size. Re-run
+        // every frame: native DPI changes when the window moves to
+        // another monitor.
+        if let Some(native_ppp) = ctx.native_pixels_per_point() {
             let render_scale = self
                 .user_scale
                 .unwrap_or_else(|| pick_render_scale(native_ppp));
-            let live_ppp = ctx.pixels_per_point();
-            if (live_ppp - render_scale).abs() > 0.01 {
-                // ppp not active yet — keep requesting until it
-                // matches. `set_pixels_per_point` queues for the
-                // next pass; the coordinator's resize loop uses
-                // the LIVE ppp inside egui-winit, so until ppp
-                // settles, any `InnerSize` would be miscomputed
-                // (1.5 × 275 = 413 px instead of 2 × 275 = 550).
-                ctx.set_pixels_per_point(render_scale);
-            } else {
-                // ppp is live. Force the coordinator to re-emit
-                // its `InnerSize` — its cache keys on egui units
-                // (275×116), which didn't change when we flipped
-                // ppp, so without invalidation it would silently
-                // keep the boot-time 413×174 physical window.
-                self.windows.invalidate_viewport_cache();
-                self.render_scale_applied = true;
-            }
+            self.windows.set_scale(render_scale / native_ppp);
+        }
+        if (ctx.zoom_factor() - 1.0).abs() > 0.001 {
+            ctx.set_zoom_factor(1.0);
         }
 
         // Replay set_fonts when the active skin changed (boot is just the
@@ -1363,7 +1363,6 @@ impl eframe::App for OneAmpApp {
         self.windows.inject_forwarded_input(ctx);
         self.handle_keyboard(ctx);
         self.handle_drops(ctx);
-        self.windows.handle_shortcuts(ctx);
 
         let spectrum = self.audio.get_spectrum_data();
         let waveform = self.audio.get_waveform_data();
@@ -1413,6 +1412,7 @@ impl eframe::App for OneAmpApp {
                 .collect(),
         };
 
+        self.windows.set_eq_auto(self.config.equalizer.auto);
         let actions = self.windows.collect_actions(
             ctx,
             self.audio.engine(),
@@ -1528,7 +1528,7 @@ impl eframe::App for OneAmpApp {
         }
 
         if self.show_hotkeys {
-            self.paint_hotkey_overlay(ctx);
+            self.show_hotkey_window(ctx);
         }
 
         // Playlist inline filter overlay (Ctrl+F). Painted before
@@ -1562,6 +1562,28 @@ impl eframe::App for OneAmpApp {
                     // without restarting. `refresh_entry_metadata`
                     // re-reads via `TrackInfo::from_file`.
                     self.playlist.refresh_entry_metadata(idx);
+                }
+            }
+        }
+        if self.preferences_open {
+            self.show_preferences(ctx);
+        }
+        if let Some(mut dlg) = self.jump_dialog.take() {
+            match dlg.show(ctx, self.windows.active_skin()) {
+                crate::dialog_util::DialogOutcome::None => self.jump_dialog = Some(dlg),
+                crate::dialog_util::DialogOutcome::Cancelled => {}
+                crate::dialog_util::DialogOutcome::Accepted(choice) => {
+                    if choice.index < self.playlist.len() {
+                        if choice.queue {
+                            self.playlist.queue_track(choice.index);
+                            self.push_toast("Queued", std::time::Duration::from_millis(1200));
+                        } else {
+                            self.handle_playlist_action(crate::windows::PlaylistAction::PlayTrack(
+                                choice.index,
+                            ));
+                        }
+                        self.windows.scroll_playlist_to(choice.index);
+                    }
                 }
             }
         }
@@ -1646,28 +1668,6 @@ impl eframe::App for OneAmpApp {
             && t.elapsed() >= CONFIG_SAVE_DEBOUNCE
         {
             self.flush_config();
-        }
-
-        // Apply user-driven scale override. Same dance as the boot-time
-        // render_scale_applied path: queue `set_pixels_per_point`, wait
-        // for egui to settle, then invalidate the coordinator's viewport
-        // cache so the next resize round picks up the new physical size.
-        //
-        // When `user_scale == None` ("Auto (DPI)" menu entry), we don't
-        // freeze pixels_per_point at whatever value the user last picked
-        // — instead we re-derive the integer scale from the OS DPI right
-        // here and push it through, so clicking Auto actually flips back
-        // to the auto-detected value instead of doing nothing visible.
-        if self.scale_dirty {
-            let native = ctx.native_pixels_per_point().unwrap_or(1.0);
-            let target = self.user_scale.unwrap_or_else(|| pick_render_scale(native));
-            let live_ppp = ctx.pixels_per_point();
-            if (live_ppp - target).abs() > 0.01 {
-                ctx.set_pixels_per_point(target);
-            } else {
-                self.windows.invalidate_viewport_cache();
-                self.scale_dirty = false;
-            }
         }
 
         // Sleep-timer ramp + fire. Runs every frame so the volume fade is

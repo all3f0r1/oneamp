@@ -283,6 +283,8 @@ pub struct PlaylistWindow {
     /// Soft-focus flag pushed in by the coordinator. Drives the active vs
     /// inactive cornerpiece/title-tile extracts from `pledit.bmp`.
     pub(super) focused: bool,
+    /// Row to scroll into view on the next paint (keyboard navigation).
+    pub ensure_visible: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -300,6 +302,11 @@ pub(super) enum DragKind {
 }
 
 impl PlaylistWindow {
+    /// Points per skin pixel.
+    pub fn set_scale(&mut self, scale: f32) {
+        self.renderer.set_scale(scale);
+    }
+
     pub fn new(skin: WszSkin, scale: f32) -> Self {
         Self {
             renderer: WszRenderer::new(skin, scale),
@@ -315,6 +322,7 @@ impl PlaylistWindow {
             current_total_secs: None,
             mouse_was_pressed: false,
             focused: false,
+            ensure_visible: None,
         }
     }
 

@@ -92,12 +92,15 @@ pub struct WszWindowCoordinator {
     /// dragged by their title bars and snapped magnetically. Off = the
     /// historical single-viewport stack.
     detached: bool,
-    /// Main window screen position (logical points) as last read from
-    /// the OS. Diffed each frame to drag the docked group along.
+    /// Main window screen position in physical pixels, as last read from
+    /// the OS. Diffed each frame to drag the docked group along. Physical
+    /// so a zoom change (dialogs switch egui's global zoom) isn't read as
+    /// a move.
     main_pos: Option<Pos2>,
-    /// EQ / playlist top-left relative to the main window. `None` = the
-    /// docked default under the player. Relative so the layout follows
-    /// the main window wherever the window manager places it.
+    /// EQ / playlist top-left relative to the main window, in skin
+    /// pixels. `None` = the docked default under the player. Relative so
+    /// the layout follows the main window wherever the window manager
+    /// places it; skin pixels so it survives scale and zoom changes.
     offsets: [Option<Vec2>; 2],
     /// Sub-window currently spawned as an OS window; its spawn position
     /// is kept so the viewport builder doesn't re-send it every frame
@@ -331,25 +334,15 @@ impl WszWindowCoordinator {
             if self.show_equalizer
                 && let Some(ref mut win) = self.equalizer_window
             {
-                match win.show(ctx, audio_engine, next_dock_y) {
+                let action = win.show(ctx, audio_engine, next_dock_y);
+                next_dock_y += win.height_skin();
+                match action {
                     Some(super::wsz_ui::equalizer_window::EqualizerAction::Close) => {
                         self.show_equalizer = false;
                     }
-                    Some(super::wsz_ui::equalizer_window::EqualizerAction::SaveAsUserPreset) => {
-                        // Surface the EQ-side intent up the action
-                        // pipe. The app handles `OpenSavePresetDialog`
-                        // by popping the modal name prompt and (on
-                        // accept) writing into `PresetManager`. We
-                        // prefer overwriting any main_action set this
-                        // frame because the user's most recent
-                        // explicit click was inside the EQ dropdown.
-                        main_action = Some(
-                            super::wsz_ui::main_window::MainWindowAction::OpenSavePresetDialog,
-                        );
-                    }
+                    Some(other) => main_action = Some(eq_action_to_main(other)),
                     None => {}
                 }
-                next_dock_y += win.height_skin();
             }
             if self.show_playlist
                 && let Some(ref mut win) = self.playlist_window
@@ -548,6 +541,14 @@ impl WszWindowCoordinator {
         display_format: &str,
     ) -> (Option<MainWindowAction>, PlaylistAction) {
         let ppp = ctx.pixels_per_point();
+        let scale = self.window_state.scale;
+        // Viewport rect in points for a sub-window.
+        let viewport_rect = |this: &Self, win: Win| -> Option<Rect> {
+            let main = this.main_pos?;
+            let r = this.skin_rect(win)?;
+            let min = (main + r.min.to_vec2() * ppp * scale) / ppp;
+            Some(Rect::from_min_size(min, r.size() * scale))
+        };
         let level = if always_on_top {
             egui::WindowLevel::AlwaysOnTop
         } else {
@@ -571,7 +572,7 @@ impl WszWindowCoordinator {
         let mut playlist_action = PlaylistAction::None;
 
         if self.show_equalizer
-            && let Some(mut rect) = self.screen_rect(Win::Equalizer)
+            && let Some(mut rect) = viewport_rect(self, Win::Equalizer)
         {
             // The preset dropdown paints below the EQ floor; grow the OS
             // window so it isn't clipped.
@@ -588,7 +589,7 @@ impl WszWindowCoordinator {
                 egui::ViewportId::from_hash_of(EQ_VIEWPORT),
                 builder("OneAmp Equalizer", spawn, rect),
                 |cctx, _| {
-                    self.sub_viewport_frame(cctx, ppp, Win::Equalizer, rect.size());
+                    self.sub_viewport_frame(cctx, Win::Equalizer, rect.size());
                     let action = self
                         .equalizer_window
                         .as_mut()
@@ -600,9 +601,7 @@ impl WszWindowCoordinator {
                 Some(super::wsz_ui::equalizer_window::EqualizerAction::Close) => {
                     self.show_equalizer = false;
                 }
-                Some(super::wsz_ui::equalizer_window::EqualizerAction::SaveAsUserPreset) => {
-                    main_action = Some(MainWindowAction::OpenSavePresetDialog);
-                }
+                Some(other) => main_action = Some(eq_action_to_main(other)),
                 None => {}
             }
             if closed {
@@ -611,7 +610,7 @@ impl WszWindowCoordinator {
         }
 
         if self.show_playlist
-            && let Some(rect) = self.screen_rect(Win::Playlist)
+            && let Some(rect) = viewport_rect(self, Win::Playlist)
         {
             if self.spawned_at[1].is_none() {
                 self.enforce_until[1] = ctx.input(|i| i.time) + 0.5;
@@ -621,7 +620,7 @@ impl WszWindowCoordinator {
                 egui::ViewportId::from_hash_of(PL_VIEWPORT),
                 builder("OneAmp Playlist", spawn, rect),
                 |cctx, _| {
-                    self.sub_viewport_frame(cctx, ppp, Win::Playlist, rect.size());
+                    self.sub_viewport_frame(cctx, Win::Playlist, rect.size());
                     let action = self
                         .playlist_window
                         .as_mut()
@@ -659,10 +658,7 @@ impl WszWindowCoordinator {
     /// Per-frame bookkeeping inside a detached sub-window: keep its
     /// render scale on the player's, route soft focus, forward keys to
     /// the root viewport and drive title-bar drags.
-    fn sub_viewport_frame(&mut self, cctx: &egui::Context, ppp: f32, win: Win, size: Vec2) {
-        if (cctx.pixels_per_point() - ppp).abs() > 0.01 {
-            cctx.set_pixels_per_point(ppp);
-        }
+    fn sub_viewport_frame(&mut self, cctx: &egui::Context, win: Win, size: Vec2) {
         // The window may have been created before the render scale
         // settled, and the builder only re-sends a size when it changes:
         // enforce the size in points against what the OS reports.
@@ -723,33 +719,47 @@ impl WszWindowCoordinator {
                 .as_ref()
                 .map_or(232, |w| w.height_skin()),
         };
-        Vec2::new(275.0, h as f32) * self.window_state.scale
+        Vec2::new(275.0, h as f32)
     }
 
-    /// Offset of a sub-window relative to main; defaults reproduce the
-    /// docked stack (EQ under main, playlist under EQ when it's open).
+    /// Offset of a sub-window relative to main, in skin pixels; defaults
+    /// reproduce the docked stack (EQ under main, playlist under EQ when
+    /// it's open).
     fn offset(&self, win: Win) -> Vec2 {
-        let s = self.window_state.scale;
         match win {
             Win::Main => Vec2::ZERO,
-            Win::Equalizer => self.offsets[0].unwrap_or(Vec2::new(0.0, 116.0 * s)),
+            Win::Equalizer => self.offsets[0].unwrap_or(Vec2::new(0.0, 116.0)),
             Win::Playlist => self.offsets[1].unwrap_or_else(|| {
                 let below_eq = if self.show_equalizer { 116.0 } else { 0.0 };
-                Vec2::new(0.0, (116.0 + below_eq) * s)
+                Vec2::new(0.0, 116.0 + below_eq)
             }),
         }
     }
 
-    /// Screen rect of a visible window, `None` when hidden or before the
-    /// main window's position is known.
-    fn screen_rect(&self, win: Win) -> Option<Rect> {
+    /// Rect of a visible window in skin pixels, relative to the main
+    /// window's top-left. `None` when hidden.
+    fn skin_rect(&self, win: Win) -> Option<Rect> {
         let visible = match win {
             Win::Main => true,
             Win::Equalizer => self.show_equalizer,
             Win::Playlist => self.show_playlist,
         };
+        visible.then(|| Rect::from_min_size(self.offset(win).to_pos2(), self.window_size(win)))
+    }
+
+    fn skin_rects(&self) -> [Option<Rect>; 3] {
+        [
+            self.skin_rect(Win::Main),
+            self.skin_rect(Win::Equalizer),
+            self.skin_rect(Win::Playlist),
+        ]
+    }
+
+    /// Screen position (points of `vctx`) where `win` belongs.
+    fn target_points(&self, vctx: &egui::Context, win: Win) -> Option<Pos2> {
+        let ppp = vctx.pixels_per_point();
         let main = self.main_pos?;
-        visible.then(|| Rect::from_min_size(main + self.offset(win), self.window_size(win)))
+        Some((main + self.offset(win) * ppp * self.window_state.scale) / ppp)
     }
 
     /// True when `local` (window-local points) is on a draggable part of
@@ -775,30 +785,30 @@ impl WszWindowCoordinator {
     /// Main window moved (by the WM, from its own title-bar drag): carry
     /// the windows docked to it along and leave the others in place.
     fn track_main_window(&mut self, ctx: &egui::Context) {
+        let ppp = ctx.pixels_per_point();
+        let px_per_skin = ppp * self.window_state.scale;
         let (outer, now) = ctx.input(|i| (i.viewport().outer_rect.map(|r| r.min), i.time));
-        let Some(m) = outer else {
+        let Some(m) = outer.map(|o| (o.to_vec2() * ppp).to_pos2()) else {
             return;
         };
         if let Some(prev) = self.main_pos
             && (m - prev).length() > 0.5
         {
-            let delta = m - prev;
-            let before = [
-                self.screen_rect(Win::Main),
-                self.screen_rect(Win::Equalizer),
-                self.screen_rect(Win::Playlist),
-            ];
-            let group = layout::docked_group(&before, 0);
+            let delta_skin = (m - prev) / px_per_skin;
+            self.main_pos = Some(m);
+            let group = layout::docked_group(&self.skin_rects(), 0);
             for sub in [Win::Equalizer, Win::Playlist] {
                 let k = sub as usize - 1;
                 if group.contains(&(sub as usize)) {
-                    ctx.send_viewport_cmd_to(
-                        Self::viewport_id(sub),
-                        egui::ViewportCommand::OuterPosition(m + self.offset(sub)),
-                    );
+                    if let Some(p) = self.target_points(ctx, sub) {
+                        ctx.send_viewport_cmd_to(
+                            Self::viewport_id(sub),
+                            egui::ViewportCommand::OuterPosition(p),
+                        );
+                    }
                     self.enforce_until[k] = now + 0.3;
                 } else {
-                    self.offsets[k] = Some(self.offset(sub) - delta);
+                    self.offsets[k] = Some(self.offset(sub) - delta_skin);
                 }
             }
             self.moved_at[0] = Some(now);
@@ -835,13 +845,17 @@ impl WszWindowCoordinator {
             }
         }
         let k = win as usize - 1;
+        let ppp = cctx.pixels_per_point();
+        let px_per_skin = ppp * self.window_state.scale;
         if let (Some(c), Some(m)) = (outer, self.main_pos) {
-            let offset = c - m;
-            if (offset - self.offset(win)).length() <= 0.5 {
+            let offset = ((c.to_vec2() * ppp).to_pos2() - m) / px_per_skin;
+            if (offset - self.offset(win)).length() * px_per_skin <= 1.0 {
                 return;
             }
             if now < self.enforce_until[k] {
-                cctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(m + self.offset(win)));
+                if let Some(p) = self.target_points(cctx, win) {
+                    cctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(p));
+                }
             } else {
                 self.offsets[k] = Some(offset);
                 self.moved_at[win as usize] = Some(now);
@@ -850,8 +864,9 @@ impl WszWindowCoordinator {
     }
 
     /// Once a moved window has been still for a moment, pull it onto any
-    /// edge within `layout::SNAP_DISTANCE`. Main snaps with its docked
-    /// group; the group then follows through `track_main_window`.
+    /// edge within `layout::SNAP_DISTANCE` skin pixels. Main snaps with
+    /// its docked group; the group then follows through
+    /// `track_main_window`.
     fn snap_settled_windows(&mut self, ctx: &egui::Context) {
         const SNAP_SETTLE: f64 = 0.15;
         let now = ctx.input(|i| i.time);
@@ -861,11 +876,7 @@ impl WszWindowCoordinator {
                 continue;
             }
             self.moved_at[idx] = None;
-            let rects = [
-                self.screen_rect(Win::Main),
-                self.screen_rect(Win::Equalizer),
-                self.screen_rect(Win::Playlist),
-            ];
+            let rects = self.skin_rects();
             let group = if win == Win::Main {
                 layout::docked_group(&rects, 0)
             } else {
@@ -883,17 +894,18 @@ impl WszWindowCoordinator {
             match win {
                 Win::Main => {
                     if let Some(m) = self.main_pos {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(m + snap));
+                        let ppp = ctx.pixels_per_point();
+                        let p = (m + snap * ppp * self.window_state.scale) / ppp;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(p));
                     }
                 }
                 Win::Equalizer | Win::Playlist => {
                     let k = idx - 1;
-                    let offset = self.offset(win) + snap;
-                    self.offsets[k] = Some(offset);
-                    if let Some(m) = self.main_pos {
+                    self.offsets[k] = Some(self.offset(win) + snap);
+                    if let Some(p) = self.target_points(ctx, win) {
                         ctx.send_viewport_cmd_to(
                             Self::viewport_id(win),
-                            egui::ViewportCommand::OuterPosition(m + offset),
+                            egui::ViewportCommand::OuterPosition(p),
                         );
                     }
                     self.enforce_until[k] = now + 0.3;
@@ -925,7 +937,7 @@ impl WszWindowCoordinator {
     /// main (saved on a monitor that's gone) falls back to the docked
     /// default so the window can't come back off-screen.
     pub fn set_subwindow_offsets(&mut self, offsets: [Option<[f32; 2]>; 2]) {
-        const MAX_OFFSET: f32 = 4096.0;
+        const MAX_OFFSET: f32 = 2000.0;
         self.offsets = offsets.map(|o| {
             o.map(|[x, y]| Vec2::new(x, y))
                 .filter(|v| v.x.abs() < MAX_OFFSET && v.y.abs() < MAX_OFFSET)
@@ -943,6 +955,27 @@ impl WszWindowCoordinator {
         if let Some(w) = self.playlist_window.as_mut() {
             w.set_full_height_skin(h);
         }
+    }
+
+    /// Points per skin pixel. The player is magnified here rather than
+    /// through egui's zoom, which is global to every viewport: dialogs
+    /// render at native size without shrinking the player.
+    pub fn set_scale(&mut self, scale: f32) {
+        if (self.window_state.scale - scale).abs() < 0.001 {
+            return;
+        }
+        self.window_state.scale = scale;
+        self.main_window.set_scale(scale);
+        if let Some(w) = self.playlist_window.as_mut() {
+            w.set_scale(scale);
+        }
+        if let Some(w) = self.equalizer_window.as_mut() {
+            w.set_scale(scale);
+        }
+        if let Some(w) = self.shade_window.as_mut() {
+            w.set_scale(scale);
+        }
+        self.last_viewport_size = None;
     }
 
     /// Toggle playlist window visibility
@@ -1029,23 +1062,28 @@ impl WszWindowCoordinator {
         }
     }
 
-    /// Whether the playlist sub-window is currently the soft-focus target
-    /// AND visible — the only situation where type-to-jump should
-    /// hijack bare-letter keys. Used by `app::OneAmpApp` to switch
-    /// bare-letter handling between transport hotkeys (main focused)
-    /// and playlist navigation (playlist focused).
-    pub fn is_playlist_focused(&self) -> bool {
-        self.show_playlist && self.active_subwindow == ActiveSubWindow::Playlist
+    /// Mirror the app-owned EQ AUTO state onto the AUTO button.
+    pub fn set_eq_auto(&mut self, on: bool) {
+        if let Some(eq) = self.equalizer_window.as_mut() {
+            eq.set_auto(on);
+        }
     }
 
-    /// Drop the `last_viewport_size` cache so the next `collect_actions`
-    /// pass re-sends `Min/Max/InnerSize` even if the egui-unit target
-    /// hasn't changed. Used by the app when `pixels_per_point` flips:
-    /// the physical size depends on ppp × egui-units, so a ppp change
-    /// requires a fresh resize round even though the egui-unit target
-    /// is unchanged.
-    pub fn invalidate_viewport_cache(&mut self) {
-        self.last_viewport_size = None;
+    /// Which window's key bindings apply: the soft-focused visible one.
+    pub fn focused_scope(&self) -> crate::app::keymap::Scope {
+        use crate::app::keymap::Scope;
+        match self.active_subwindow {
+            ActiveSubWindow::Playlist if self.show_playlist => Scope::Playlist,
+            ActiveSubWindow::Equalizer if self.show_equalizer => Scope::Equalizer,
+            _ => Scope::Global,
+        }
+    }
+
+    /// Scroll the playlist so row `idx` is visible on its next paint.
+    pub fn scroll_playlist_to(&mut self, idx: usize) {
+        if let Some(w) = self.playlist_window.as_mut() {
+            w.ensure_visible = Some(idx);
+        }
     }
 
     /// Toggle equalizer window visibility
@@ -1151,25 +1189,18 @@ impl WszWindowCoordinator {
         let skin = self.main_window.skin();
         self.cursor_overlay.paint(ctx, skin, area);
     }
+}
 
-    /// Handle keyboard shortcuts for windows
-    pub fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        ctx.input(|i| {
-            // Alt+E: Toggle playlist
-            if i.modifiers.alt && i.key_pressed(egui::Key::E) {
-                self.toggle_playlist();
-            }
-
-            // Alt+G: Toggle equalizer
-            if i.modifiers.alt && i.key_pressed(egui::Key::G) {
-                self.toggle_equalizer();
-            }
-
-            // Alt+M: Toggle shade mode
-            if i.modifiers.alt && i.key_pressed(egui::Key::M) {
-                self.toggle_shade();
-            }
-        });
+/// EQ-window actions the app handles, in the shared action vocabulary.
+fn eq_action_to_main(a: super::wsz_ui::equalizer_window::EqualizerAction) -> MainWindowAction {
+    use super::wsz_ui::equalizer_window::EqualizerAction as E;
+    match a {
+        E::SaveAsUserPreset => MainWindowAction::OpenSavePresetDialog,
+        E::ToggleAuto => MainWindowAction::ToggleEqAuto,
+        E::SaveAutoPreset => MainWindowAction::SaveEqAutoPreset,
+        E::RemoveAutoPreset => MainWindowAction::RemoveEqAutoPreset,
+        // Close is handled by the coordinator itself.
+        E::Close => MainWindowAction::ToggleEqualizer,
     }
 }
 

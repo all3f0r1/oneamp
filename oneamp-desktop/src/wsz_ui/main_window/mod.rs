@@ -94,6 +94,13 @@ pub enum MainWindowAction {
     /// pushes the new preset into `PresetManager` and refreshes the
     /// EQ window's user-preset list.
     OpenSavePresetDialog,
+    /// Flip EQ AUTO: apply the playing track's auto-load preset, or go
+    /// back to the global curve.
+    ToggleEqAuto,
+    /// Tie the current EQ curve to the playing track (auto-load).
+    SaveEqAutoPreset,
+    /// Forget the playing track's auto-load preset.
+    RemoveEqAutoPreset,
     /// Toggle ReplayGain track-level gain normalization. The app flips
     /// the persisted flag and pushes `SetReplayGainEnabled` through.
     ToggleReplayGain,
@@ -158,6 +165,10 @@ pub enum MainWindowAction {
     PickSkin,
     /// Toggle the hotkey cheat-sheet overlay (Aide menu, F1 parity).
     ShowHotkeys,
+    /// Open the Preferences window (Ctrl+P).
+    ShowPreferences,
+    /// Open the Jump to file box (J / F3).
+    JumpToFile,
     /// Reopen the first-launch welcome screen on demand. Originally a
     /// one-shot first-run-only viewport; surfaced under Help once we
     /// learned that users with existing configs had no way to access
@@ -248,6 +259,11 @@ pub struct WszMainWindow {
 }
 
 impl WszMainWindow {
+    /// Points per skin pixel.
+    pub fn set_scale(&mut self, scale: f32) {
+        self.renderer.set_scale(scale);
+    }
+
     pub fn new(skin: WszSkin, scale: f32, custom_chrome: bool) -> Self {
         Self {
             renderer: WszRenderer::new(skin, scale),

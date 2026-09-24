@@ -173,12 +173,22 @@ impl EqualizerWindow {
                     let _ = engine.send_command(AudioCommand::SetEqualizerEnabled(self.enabled));
                 }
             } else if auto_rect.contains(mouse_pos) {
-                self.auto = !self.auto;
+                action = Some(EqualizerAction::ToggleAuto);
             } else if presets_rect.contains(mouse_pos) {
                 self.presets_menu_open = !self.presets_menu_open;
             } else if !self.presets_menu_open {
                 for (slider_idx, &track_x) in TRACK_X.iter().enumerate() {
                     if self.slider_hit_rect(slider_idx, offset).contains(mouse_pos) {
+                        // Double-click resets the slider to 0 dB.
+                        let now = ui.input(|i| i.time);
+                        let double = self
+                            .last_slider_press
+                            .is_some_and(|(s, t)| s == slider_idx && now - t < 0.35);
+                        self.last_slider_press = Some((slider_idx, now));
+                        if double {
+                            self.set_slider(slider_idx, 0.0, audio_engine);
+                            break;
+                        }
                         self.dragging = Some(slider_idx);
                         // Grabbing the thumb keeps the grab point; a click
                         // elsewhere on the track centers the thumb there.
@@ -235,8 +245,17 @@ impl EqualizerWindow {
             self.renderer
                 .skin_to_screen(TRACK_X[slider_idx], SLIDER_TOP_Y, offset);
         let thumb_top = (mouse_pos.y - track_top_screen.y) / scale - self.drag_grab_y;
-        let gain = thumb_offset_to_db(thumb_top);
+        self.set_slider(slider_idx, thumb_offset_to_db(thumb_top), audio_engine);
+    }
 
+    /// Set slider `slider_idx` (0 = preamp, 1..=10 = bands) and push it
+    /// to the engine.
+    pub(super) fn set_slider(
+        &mut self,
+        slider_idx: usize,
+        gain: f32,
+        audio_engine: Option<&AudioEngine>,
+    ) {
         if slider_idx == 0 {
             self.preamp = gain.clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);
             if let Some(engine) = audio_engine {

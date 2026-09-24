@@ -62,6 +62,20 @@ impl OneAmpApp {
             self.audio.send_command(AudioCommand::PlayUrl(url));
             return;
         }
+        // A restored entry whose file is gone (drive unplugged): say so
+        // quietly instead of a blocking error dialog.
+        if crate::session::is_unavailable(&path) {
+            if let Some(e) = self
+                .playlist
+                .entries_mut()
+                .iter_mut()
+                .find(|e| e.path == path)
+            {
+                e.unavailable = true;
+            }
+            self.push_toast("File not found", std::time::Duration::from_millis(2000));
+            return;
+        }
         self.recent.add_file(path.clone());
         self.audio.send_command(AudioCommand::Play(path));
     }
@@ -265,6 +279,7 @@ impl OneAmpApp {
                     {
                         self.pending_resume = Some((path, pos));
                     }
+                    self.apply_eq_auto(&track.path);
                     // A file that loads is available again.
                     if let Some(e) = self
                         .playlist
@@ -308,6 +323,9 @@ impl OneAmpApp {
                     );
                 }
                 _ => {}
+            }
+            if let oneamp_core::AudioEvent::EqualizerUpdated(_, gains) = &event {
+                self.note_eq_update(gains);
             }
             self.state.handle_audio_event(event.clone());
             events.push(event);

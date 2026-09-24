@@ -21,6 +21,20 @@ pub struct EqualizerConfig {
     pub preamp_db: f32,
     #[serde(default)]
     pub current_preset: Option<String>,
+    /// EQ AUTO: load the track's auto-load preset when it plays.
+    #[serde(default)]
+    pub auto: bool,
+    /// Auto-load presets keyed by track path.
+    #[serde(default)]
+    pub auto_presets: std::collections::BTreeMap<String, AutoEqPreset>,
+}
+
+/// EQ curve tied to one track (Winamp "auto-load preset").
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AutoEqPreset {
+    pub gains: Vec<f32>,
+    #[serde(default)]
+    pub preamp_db: f32,
 }
 
 fn default_eq_gains() -> Vec<f32> {
@@ -38,6 +52,8 @@ impl Default for EqualizerConfig {
             gains: default_eq_gains(),
             preamp_db: 0.0,
             current_preset: None,
+            auto: false,
+            auto_presets: Default::default(),
         }
     }
 }
@@ -317,10 +333,14 @@ pub struct AppConfig {
     /// height. Restored at startup.
     #[serde(default)]
     pub windows: WindowLayoutConfig,
+    /// Keyboard shortcut profile. Winamp Classic by default; the
+    /// OneAmp 1.0 layout stays available.
+    #[serde(default)]
+    pub key_profile: crate::app::keymap::KeyProfile,
 }
 
 /// Persisted window layout. Offsets are relative to the main window's
-/// top-left in logical points; `None` = docked under the player.
+/// top-left in skin pixels; `None` = docked under the player.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct WindowLayoutConfig {
     #[serde(default)]
@@ -398,6 +418,7 @@ impl Default for AppConfig {
             show_remaining: false,
             resume_long_files: false,
             windows: WindowLayoutConfig::default(),
+            key_profile: Default::default(),
         }
     }
 }
@@ -569,6 +590,7 @@ impl AppConfig {
         pull!(show_remaining);
         pull!(resume_long_files);
         pull!(windows);
+        pull!(key_profile);
     }
 
     /// Save configuration to file. Uses a write-to-tmp + rename dance so a
@@ -632,6 +654,7 @@ mod tests {
             gains: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0],
             preamp_db: 3.5,
             current_preset: None,
+            ..Default::default()
         };
 
         let json = serde_json::to_string(&config).expect("Should serialize");
@@ -650,6 +673,7 @@ mod tests {
             gains: vec![1.0; 10],
             preamp_db: 0.0,
             current_preset: None,
+            ..Default::default()
         };
         config.first_run = false;
         config.skin_path = Some(PathBuf::from("/skins/classic.wsz"));

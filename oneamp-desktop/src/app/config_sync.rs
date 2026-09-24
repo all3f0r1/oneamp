@@ -45,8 +45,10 @@ impl OneAmpApp {
         // gapless, …) keeps whatever the previous load produced so
         // they survive the round-trip untouched.
         self.config.equalizer.enabled = self.state.equalizer.enabled;
-        self.config.equalizer.gains = self.state.equalizer.gains.clone();
-        self.config.equalizer.preamp_db = self.state.equalizer.preamp_db;
+        // The global curve, not an auto-loaded preset that's playing.
+        let (gains, preamp_db) = self.global_eq();
+        self.config.equalizer.gains = gains;
+        self.config.equalizer.preamp_db = preamp_db;
         self.config.equalizer.current_preset = self.state.equalizer.current_preset.clone();
         self.config.playback.volume = self.state.volume.level;
         self.config.playback.muted = self.state.volume.muted;
@@ -125,10 +127,11 @@ impl OneAmpApp {
         if self.config.equalizer.enabled != self.state.equalizer.enabled {
             changed = true;
         }
-        if (self.config.equalizer.preamp_db - self.state.equalizer.preamp_db).abs() > f32::EPSILON {
+        let (gains, preamp_db) = self.global_eq();
+        if (self.config.equalizer.preamp_db - preamp_db).abs() > f32::EPSILON {
             changed = true;
         }
-        if self.config.equalizer.gains != self.state.equalizer.gains {
+        if self.config.equalizer.gains != gains {
             changed = true;
         }
         if self.config.always_on_top != self.always_on_top {

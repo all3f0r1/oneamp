@@ -68,6 +68,13 @@ pub enum EqualizerAction {
     /// `PresetNameDialog` modal and (on accept) writes the current
     /// band curve + preamp into `PresetManager`.
     SaveAsUserPreset,
+    /// AUTO button clicked. The app owns the AUTO state (see
+    /// `OneAmpApp::toggle_eq_auto`) and pushes it back via `set_auto`.
+    ToggleAuto,
+    /// "Save auto-load preset": tie the current curve to the playing track.
+    SaveAutoPreset,
+    /// "Remove auto-load preset" for the playing track.
+    RemoveAutoPreset,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -144,11 +151,12 @@ pub struct EqualizerWindow {
     /// "Save as preset…". Rendered in the PRESETS dropdown after the
     /// built-ins so muscle memory for stock presets stays intact.
     pub(super) user_presets: Vec<oneamp_core::equalizer_presets::EqualizerPreset>,
-    /// Set to true by the dropdown's "Save as preset…" row click.
-    /// The next `show()` consumes it and returns
-    /// `EqualizerAction::SaveAsUserPreset` so the app can open the
-    /// modal name-prompt dialog. Cleared on read.
-    pub(super) pending_save_as_user_preset: bool,
+    /// Action picked in the PRESETS dropdown or on a button that the
+    /// app must carry out. The next `show()` returns and clears it.
+    pub(super) pending_action: Option<EqualizerAction>,
+    /// Last slider press `(slider, time)`, to spot a double-click that
+    /// resets the band to 0 dB.
+    pub(super) last_slider_press: Option<(usize, f64)>,
 }
 
 /// Active drag inside the EQ shade strip. Volume + balance share the
@@ -179,6 +187,8 @@ pub(super) enum PresetRow<'a> {
     /// "Save as preset…" — opens the in-app name dialog, then writes
     /// the current bands + preamp into the user preset store.
     SaveAsUserPreset,
+    SaveAutoPreset,
+    RemoveAutoPreset,
     /// Built-in preset row (Rock, Pop, Jazz, …).
     Builtin(&'a oneamp_core::equalizer_presets::EqualizerPreset),
     /// User-defined preset (saved earlier via "Save as preset…").
@@ -186,6 +196,11 @@ pub(super) enum PresetRow<'a> {
 }
 
 impl EqualizerWindow {
+    /// Points per skin pixel.
+    pub fn set_scale(&mut self, scale: f32) {
+        self.renderer.set_scale(scale);
+    }
+
     pub fn new(skin: WszSkin, scale: f32) -> Self {
         Self::with_gains(skin, scale, &[0.0; 10], 0.0, false)
     }
@@ -229,7 +244,8 @@ impl EqualizerWindow {
             current_preset_name: None,
             flash_band_state: None,
             user_presets: Vec::new(),
-            pending_save_as_user_preset: false,
+            pending_action: None,
+            last_slider_press: None,
         }
     }
 
@@ -339,7 +355,7 @@ impl EqualizerWindow {
         // 14 px per row × (3 I/O rows + 16 built-ins + N user presets).
         // Counted dynamically so adding / saving a user preset grows
         // the viewport overflow on the next frame without manual sync.
-        let row_count: u32 = 3 + 16 + self.user_presets.len() as u32;
+        let row_count: u32 = 5 + 16 + self.user_presets.len() as u32;
         let menu_h = 14 * row_count;
         let menu_bottom_in_eq = menu_top_in_eq + menu_h;
         // Only the overflow *past* the EQ window's own floor counts;
@@ -409,12 +425,8 @@ impl EqualizerWindow {
                 // pending flag during render_presets_menu. Drain it
                 // before returning so the modal name-prompt dialog
                 // opens exactly once per click.
-                if self.pending_save_as_user_preset {
-                    self.pending_save_as_user_preset = false;
-                    Some(EqualizerAction::SaveAsUserPreset)
-                } else {
-                    input_action
-                }
+                self.render_band_readout(ui, offset);
+                self.pending_action.take().or(input_action)
             });
 
         inner.inner
@@ -516,6 +528,11 @@ impl EqualizerWindow {
     }
 
     /// Slider value (preamp at index 0, then 10 bands).
+    /// Mirror the app's AUTO state onto the button.
+    pub fn set_auto(&mut self, on: bool) {
+        self.auto = on;
+    }
+
     pub(super) fn value_for(&self, slider_idx: usize) -> f32 {
         if slider_idx == 0 {
             self.preamp

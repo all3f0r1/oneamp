@@ -249,9 +249,7 @@ impl MainMenu {
                 // Keep the popup's render-scale aligned with the parent's
                 // so menu text physical size matches the rest of the
                 // player regardless of the OS-reported monitor ppp.
-                if (popup_ctx.pixels_per_point() - ppp).abs() > 0.01 {
-                    popup_ctx.set_pixels_per_point(ppp);
-                }
+                let _ = ppp;
 
                 let mut picked: Option<MainWindowAction> = None;
                 let mut next_armed: Vec<usize> = Vec::with_capacity(armed_path_in.len() + 1);
@@ -639,6 +637,7 @@ pub fn build_menu_items(ctx: &MenuContext) -> Vec<MenuItem> {
     let player_menu = vec![
         MenuItem::action("Open file…", A::OpenFile),
         MenuItem::action("Open folder…", A::OpenFolder),
+        MenuItem::action("Jump to file…", A::JumpToFile),
         MenuItem::action("Load playlist…", A::LoadPlaylist),
         MenuItem::action("Save playlist…", A::SavePlaylist).with_separator(),
         MenuItem::toggle(
@@ -851,6 +850,7 @@ pub fn build_menu_items(ctx: &MenuContext) -> Vec<MenuItem> {
     ];
 
     let help_menu = vec![
+        MenuItem::action("Preferences…", A::ShowPreferences),
         MenuItem::action("Keyboard shortcuts", A::ShowHotkeys),
         MenuItem::action("Welcome screen…", A::ShowWelcome).with_separator(),
         MenuItem::action("Check for updates", A::CheckForUpdates).with_separator(),

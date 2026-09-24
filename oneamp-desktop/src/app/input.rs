@@ -7,7 +7,7 @@
 //! Options-menu fan-out in one file, easier to audit when adding a
 //! new shortcut or menu entry.
 
-use super::{AUDIO_EXTENSIONS, OneAmpApp};
+use super::{AUDIO_EXTENSIONS, OneAmpApp, keymap};
 use crate::platform::updater::UpdateChecker;
 use crate::windows::{MainWindowAction, PlaylistAction};
 use eframe::egui;
@@ -99,6 +99,11 @@ impl OneAmpApp {
             MainWindowAction::TogglePlaylist => {
                 self.windows.toggle_playlist();
             }
+            MainWindowAction::ToggleEqAuto => self.toggle_eq_auto(),
+            MainWindowAction::ShowPreferences => self.preferences_open = true,
+            MainWindowAction::JumpToFile => self.open_jump_dialog(),
+            MainWindowAction::SaveEqAutoPreset => self.save_eq_auto_preset(),
+            MainWindowAction::RemoveEqAutoPreset => self.remove_eq_auto_preset(),
             MainWindowAction::ToggleDetachedWindows => {
                 if super::detached_windows_supported() {
                     let on = !self.windows.is_detached();
@@ -225,7 +230,6 @@ impl OneAmpApp {
                 // tick to push the new `pixels_per_point` through and
                 // invalidate the coordinator's viewport cache.
                 self.user_scale = choice;
-                self.scale_dirty = true;
             }
             MainWindowAction::ToggleDoubleSize => {
                 // Winamp's double-size toggle: 2× when off, back to the
@@ -234,7 +238,6 @@ impl OneAmpApp {
                 // value (auto, or a user-chosen 1×/3×/4×) doubles to 2×.
                 let already_doubled = self.user_scale == Some(2.0);
                 self.user_scale = if already_doubled { None } else { Some(2.0) };
-                self.scale_dirty = true;
                 self.mark_dirty();
             }
             MainWindowAction::SetVisualizerMode(mode) => {
@@ -332,450 +335,320 @@ impl OneAmpApp {
         (egui::Key::Z, 'z'),
     ];
 
-    /// Handle keyboard shortcuts
+    /// Keyboard shortcuts: resolve each key press through the active
+    /// profile's table (`keymap`), focused window first. Nothing fires
+    /// while a text field has focus.
     pub(super) fn handle_keyboard(&mut self, ctx: &egui::Context) {
-        let playlist_focused = self.windows.is_playlist_focused();
-        ctx.input(|i| {
-            // Space: Toggle play/pause — shared with the macOS menu
-            // bar and the tray icon, so all three paths agree on what
-            // "Play" means depending on current state.
-            if i.key_pressed(egui::Key::Space) {
-                self.toggle_playback();
+        if ctx.wants_keyboard_input() {
+            return;
+        }
+        let scope = self.windows.focused_scope();
+        let chords: Vec<keymap::Chord> = ctx.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        modifiers,
+                        ..
+                    } => Some(keymap::Chord {
+                        key: *key,
+                        ctrl: modifiers.ctrl || modifiers.mac_cmd,
+                        shift: modifiers.shift,
+                        alt: modifiers.alt,
+                    }),
+                    _ => None,
+                })
+                .collect()
+        });
+        for chord in chords {
+            let bare = !chord.ctrl && !chord.alt && !chord.shift;
+            if bare && self.nullsoft_egg(chord.key) {
+                continue;
             }
+            // Legacy profile: bare letters in the playlist jump to the
+            // next title starting with that letter.
+            if bare
+                && scope == keymap::Scope::Playlist
+                && self.config.key_profile == keymap::KeyProfile::OneAmpLegacy
+                && let Some((_, c)) = Self::JUMP_LETTERS.iter().find(|(k, _)| *k == chord.key)
+            {
+                self.jump_in_playlist(*c);
+                continue;
+            }
+            if chord.key == egui::Key::Escape && self.show_hotkeys {
+                self.show_hotkeys = false;
+                continue;
+            }
+            if let Some(cmd) = keymap::resolve(&self.keymap, chord, scope).cloned() {
+                self.run_command(cmd, ctx);
+            }
+        }
+    }
 
-            // Nullsoft easter egg: typing N-U-L in quick succession (a
-            // nod to Winamp's titlebar gag). Tracked across frames with a
-            // short deadline. Completing it flashes a toast and swallows
-            // the final `l` so it doesn't also pop the Open-file dialog.
-            let now = std::time::Instant::now();
-            if self.nul_deadline.map(|d| now > d).unwrap_or(true) {
+    /// Nullsoft easter egg: N-U-L typed quickly flashes a toast. Returns
+    /// true when `key` completed it, so the final L doesn't also open a
+    /// file.
+    fn nullsoft_egg(&mut self, key: egui::Key) -> bool {
+        let now = std::time::Instant::now();
+        if self.nul_deadline.is_none_or(|d| now > d) {
+            self.nul_progress = 0;
+        }
+        let bump = std::time::Duration::from_millis(1500);
+        match (key, self.nul_progress) {
+            (egui::Key::N, _) => {
+                self.nul_progress = 1;
+                self.nul_deadline = Some(now + bump);
+            }
+            (egui::Key::U, 1) => {
+                self.nul_progress = 2;
+                self.nul_deadline = Some(now + bump);
+            }
+            (egui::Key::L, 2) => {
                 self.nul_progress = 0;
-            }
-            let mut nul_completed = false;
-            if !i.modifiers.any() && !playlist_focused {
-                let bump = std::time::Duration::from_millis(1500);
-                if i.key_pressed(egui::Key::N) {
-                    self.nul_progress = 1;
-                    self.nul_deadline = Some(now + bump);
-                } else if i.key_pressed(egui::Key::U) && self.nul_progress == 1 {
-                    self.nul_progress = 2;
-                    self.nul_deadline = Some(now + bump);
-                } else if i.key_pressed(egui::Key::L) && self.nul_progress == 2 {
-                    nul_completed = true;
-                    self.nul_progress = 0;
-                }
-            }
-            if nul_completed {
                 self.push_toast("Nullsoft!", std::time::Duration::from_millis(2000));
+                return true;
             }
+            _ => self.nul_progress = 0,
+        }
+        false
+    }
 
-            // Ctrl+O: Open file
-            if i.modifiers.ctrl
-                && i.key_pressed(egui::Key::O)
-                && let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Audio", AUDIO_EXTENSIONS)
-                    .pick_file()
-            {
-                self.playlist.add_track(path.clone());
-                self.play_audio_path(path);
-            }
-
-            // Alt+S: Open WSZ skin file (Winamp convention)
-            if i.modifiers.alt
-                && i.key_pressed(egui::Key::S)
-                && let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Winamp skin", &["wsz", "WSZ"])
-                    .pick_file()
-            {
-                self.apply_skin_from_file(path);
-            }
-
-            // L: Load (open) an audio file. Mirrors Winamp's "L" shortcut and
-            // matches what the Eject button does, but reachable from keyboard.
-            // Suppressed when the playlist is the focused sub-window — bare
-            // letters there drive type-to-jump instead.
-            if i.key_pressed(egui::Key::L)
-                && !i.modifiers.any()
-                && !playlist_focused
-                && !nul_completed
-                && let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Audio", AUDIO_EXTENSIONS)
-                    .pick_file()
-            {
-                self.playlist.add_track(path.clone());
-                self.play_audio_path(path);
-            }
-
-            // N: Next track (suppressed when playlist focused — `n` jumps)
-            if i.key_pressed(egui::Key::N) && !playlist_focused {
-                let next = self.playlist.next_entry().map(|e| e.path.clone());
-                if let Some(path) = next {
-                    self.play_audio_path(path);
-                }
-            }
-
-            // P: Previous track (suppressed when playlist focused — `p` jumps)
-            if i.key_pressed(egui::Key::P) && !playlist_focused {
+    /// Execute a keyboard command. Menu-equivalent commands go through
+    /// `handle_main_window_action` so both paths stay identical.
+    pub(super) fn run_command(&mut self, cmd: keymap::Command, ctx: &egui::Context) {
+        use keymap::Command as C;
+        match cmd {
+            C::Action(a) => self.handle_main_window_action(a, ctx),
+            C::Prev => {
                 let prev = self.playlist.previous_entry().map(|e| e.path.clone());
                 if let Some(path) = prev {
                     self.play_audio_path(path);
                 }
             }
-
-            // S: Stop (only without modifiers, so Alt+S can be used elsewhere)
-            if i.key_pressed(egui::Key::S) && !i.modifiers.any() && !playlist_focused {
-                self.transport_stop();
-            }
-
-            // Z X C V B — the classic Winamp transport row, sitting under
-            // the left hand for one-handed control. Z=prev, X=play,
-            // C=pause, V=stop, B=next. Bare letters only, and suppressed
-            // when the playlist has soft focus so they keep driving
-            // type-to-jump there. These coexist with N/P/S/Space, which
-            // stay wired for users who learned OneAmp's earlier layout.
-            if !i.modifiers.any() && !playlist_focused {
-                if i.key_pressed(egui::Key::Z) {
-                    let prev = self.playlist.previous_entry().map(|e| e.path.clone());
-                    if let Some(path) = prev {
-                        self.play_audio_path(path);
-                    }
-                }
-                if i.key_pressed(egui::Key::X) {
-                    self.transport_play();
-                }
-                if i.key_pressed(egui::Key::C) {
-                    self.transport_pause();
-                }
-                if i.key_pressed(egui::Key::V) {
-                    self.transport_stop();
-                }
-                if i.key_pressed(egui::Key::B) {
-                    let next = self.playlist.next_entry().map(|e| e.path.clone());
-                    if let Some(path) = next {
-                        self.play_audio_path(path);
-                    }
+            C::Next => {
+                let next = self.playlist.next_entry().map(|e| e.path.clone());
+                if let Some(path) = next {
+                    self.play_audio_path(path);
                 }
             }
-
-            // Shift+S: Toggle "stop after current". Not gated on
-            // `playlist_focused` — the bare-letter jump path explicitly
-            // ignores modified key presses (see the closure below), so
-            // this binding works equally well from inside the playlist.
-            if i.key_pressed(egui::Key::S)
-                && i.modifiers.shift
-                && !i.modifiers.ctrl
-                && !i.modifiers.alt
-            {
-                self.toggle_stop_after_current();
-            }
-
-            // (V is the Winamp Stop hotkey — see the Z X C V B block
-            // above. Shuffle stays reachable via the main-window shuffle
-            // button and the Options menu.)
-
-            // R: Toggle repeat (cycle through modes) (suppressed when playlist focused)
-            if i.key_pressed(egui::Key::R) && !playlist_focused {
-                let new_mode = match self.state.repeat_mode {
-                    RepeatMode::Off => RepeatMode::All,
-                    RepeatMode::All => RepeatMode::One,
-                    RepeatMode::One => RepeatMode::Off,
+            C::Play => self.transport_play(),
+            C::Pause => self.transport_pause(),
+            C::PlayPause => self.toggle_playback(),
+            C::Stop => self.transport_stop(),
+            C::VolumeUp { fine } | C::VolumeDown { fine } => {
+                let step = if fine { 0.01 } else { 0.05 };
+                let step = if matches!(cmd, C::VolumeUp { .. }) {
+                    step
+                } else {
+                    -step
                 };
-                self.state.set_repeat_mode(new_mode);
+                // Optimistic local update so held-key repeats keep
+                // stepping before the engine echoes back.
+                let new_vol = (self.state.volume.level + step).clamp(0.0, 1.0);
+                self.state.volume.level = new_vol;
+                self.audio.send_command(AudioCommand::SetVolume(new_vol));
+            }
+            C::SeekForward { long } | C::SeekBack { long } => {
+                let step = if long { 30.0 } else { 5.0 };
+                let (cur, total) = self.state.position;
+                // Idle engine reports total = 0; stay shy of the end so
+                // the decoder isn't asked for a half frame.
+                if total > 0.5 {
+                    let new_pos = if matches!(cmd, C::SeekForward { .. }) {
+                        (cur + step).min(total - 0.5)
+                    } else {
+                        (cur - step).max(0.0)
+                    };
+                    self.audio.send_command(AudioCommand::Seek(new_pos));
+                }
+            }
+            C::Mute => {
+                let muted = !self.state.volume.muted;
+                self.state.volume.muted = muted;
+                self.audio.send_command(AudioCommand::SetMute(muted));
+            }
+            C::JumpToFile => self.open_jump_dialog(),
+            C::Preferences => self.preferences_open = true,
+            C::OpenUrl => {
+                if self.url_dialog.is_none() {
+                    self.url_dialog = Some(crate::url_dialog::UrlDialog::new());
+                }
+            }
+            C::FilterPlaylist => {
+                // A filter the user can't see is pure friction.
+                self.windows.set_playlist_visible(true);
+                self.playlist_filter_open = !self.playlist_filter_open;
+                self.playlist_filter_focus_pending = self.playlist_filter_open;
+                if !self.playlist_filter_open {
+                    self.playlist_filter.clear();
+                }
+            }
+            C::ToggleTimeDisplay => {
+                let main = self.windows.main_window_mut();
+                let remaining = main.show_remaining();
+                main.set_show_remaining(!remaining);
+            }
+            C::Undo => self.undo_playlist(),
+            C::SelectBy { delta, extend } => {
+                let n = self.playlist.len();
+                if n == 0 {
+                    return;
+                }
+                // Shift+arrows move a cursor away from the anchor.
+                let from = self
+                    .pl_cursor
+                    .filter(|&c| c < n && extend)
+                    .or(self.playlist.selected_index())
+                    .or(self.playlist.current_index())
+                    .unwrap_or(0);
+                let to = from.saturating_add_signed(delta).min(n - 1);
+                self.pl_cursor = Some(to);
+                if extend {
+                    self.playlist.extend_selected_to(to);
+                } else {
+                    self.playlist.set_selected(to);
+                }
+                self.windows.scroll_playlist_to(to);
+            }
+            C::SelectEdge { end } => {
+                let n = self.playlist.len();
+                if n > 0 {
+                    let to = if end { n - 1 } else { 0 };
+                    self.playlist.set_selected(to);
+                    self.windows.scroll_playlist_to(to);
+                }
+            }
+            C::MoveSelection { up } => self.move_selection(up),
+            C::PlaySelected => {
+                if let Some(idx) = self.playlist.selected_index() {
+                    self.handle_playlist_action(PlaylistAction::PlayTrack(idx));
+                }
+            }
+            C::RemoveSelected => self.handle_playlist_action(PlaylistAction::RemoveSelected),
+            C::SelectAll => self.handle_playlist_action(PlaylistAction::SelectAll),
+            C::QueueSelected => {
+                let selected: Vec<usize> =
+                    self.playlist.selected_indices().iter().copied().collect();
+                for idx in selected {
+                    self.playlist.toggle_queued(idx);
+                }
+            }
+            C::EqBand { band, up } => {
+                if let Some(g) = self.state.equalizer.gains.get(band).copied() {
+                    let step = if up { 1.0 } else { -1.0 };
+                    let g = (g + step).clamp(-20.0, 20.0);
+                    self.audio
+                        .send_command(AudioCommand::SetEqualizerBand(band, g));
+                    self.windows.set_equalizer_current_preset(None);
+                }
+            }
+            C::EqPreamp { up } => {
+                let step = if up { 1.0 } else { -1.0 };
+                let db = (self.state.equalizer.preamp_db + step).clamp(-20.0, 20.0);
                 self.audio
-                    .send_command(AudioCommand::SetRepeatMode(new_mode));
+                    .send_command(AudioCommand::SetEqualizerPreamp(db));
             }
-
-            // M: Mute toggle (suppressed when playlist focused — bare `m`
-            // jumps to the next entry whose title starts with M there).
-            // Outside the playlist, this is a global hotkey.
-            if i.key_pressed(egui::Key::M) && !i.modifiers.any() && !playlist_focused {
-                let new_muted = !self.state.volume.muted;
-                self.state.volume.muted = new_muted;
-                self.audio.send_command(AudioCommand::SetMute(new_muted));
-                self.mark_dirty();
+            C::EqToggle => {
+                self.audio.send_command(AudioCommand::SetEqualizerEnabled(
+                    !self.state.equalizer.enabled,
+                ));
             }
-
-            // ↑ / ↓: Volume ±5 %, Shift+↑/↓: ±1 %. Always global — arrow
-            // keys don't conflict with playlist type-to-jump. We optimistically
-            // update local state so rapid repeats keep stepping without
-            // waiting for the audio thread's echo, then let `VolumeUpdated`
-            // reconcile if anything drifted.
-            let vol_step = if i.modifiers.shift { 0.01 } else { 0.05 };
-            if i.key_pressed(egui::Key::ArrowUp) {
-                let new_vol = (self.state.volume.level + vol_step).clamp(0.0, 1.0);
-                self.state.volume.level = new_vol;
-                self.audio.send_command(AudioCommand::SetVolume(new_vol));
-                self.mark_dirty();
-            }
-            if i.key_pressed(egui::Key::ArrowDown) {
-                let new_vol = (self.state.volume.level - vol_step).clamp(0.0, 1.0);
-                self.state.volume.level = new_vol;
-                self.audio.send_command(AudioCommand::SetVolume(new_vol));
-                self.mark_dirty();
-            }
-
-            // ← / →: Seek ±5 s, Shift+←/→: ±30 s. Gated on having a
-            // seekable position — a stopped/idle engine has total = 0.
-            // We clamp shy of the very end so the limiter doesn't catch
-            // a half-decoded frame.
-            let seek_step = if i.modifiers.shift { 30.0 } else { 5.0 };
-            let (cur_pos, total_pos) = self.state.position;
-            if total_pos > 0.5 {
-                if i.key_pressed(egui::Key::ArrowRight) {
-                    let new_pos = (cur_pos + seek_step).clamp(0.0, total_pos - 0.5);
-                    self.audio.send_command(AudioCommand::Seek(new_pos));
-                }
-                if i.key_pressed(egui::Key::ArrowLeft) {
-                    let new_pos = (cur_pos - seek_step).max(0.0);
-                    self.audio.send_command(AudioCommand::Seek(new_pos));
-                }
-            }
-
-            // F1 / Shift+`?` (Shift+Slash on US/FR layouts via egui-winit):
-            // toggle the hotkey cheat-sheet overlay. Escape also dismisses
-            // it below.
-            let toggle_help = i.key_pressed(egui::Key::F1)
-                || (i.key_pressed(egui::Key::Slash) && i.modifiers.shift);
-            if toggle_help {
-                self.show_hotkeys = !self.show_hotkeys;
-            }
-
-            // Escape: dismiss the hotkey overlay. Native error dialogs
-            // are owned by the OS and absorb Escape themselves, so we
-            // only need to handle the in-app overlay here. Filter
-            // overlay handles its own Esc inside the TextEdit closure
-            // (see paint_playlist_filter_overlay) so this branch
-            // doesn't pre-empt it.
-            if i.key_pressed(egui::Key::Escape) && self.show_hotkeys {
-                self.show_hotkeys = false;
-            }
-        });
-
-        // Ctrl+F: toggle the playlist inline filter overlay. Works
-        // regardless of which sub-window has soft-focus — the filter
-        // only takes effect when the playlist is visible, but
-        // opening / closing the overlay from anywhere matches the
-        // browser/IDE convention users already know.
-        let wants_filter_toggle = ctx.input(|i| {
-            i.modifiers.ctrl
-                && !i.modifiers.alt
-                && !i.modifiers.shift
-                && i.key_pressed(egui::Key::F)
-        });
-        if wants_filter_toggle {
-            // Auto-open the playlist when the user hits Ctrl+F — a
-            // filter the user can't see is pure friction. Idempotent
-            // if it's already open.
-            self.windows.set_playlist_visible(true);
-            self.playlist_filter_open = !self.playlist_filter_open;
-            self.playlist_filter_focus_pending = self.playlist_filter_open;
-            if !self.playlist_filter_open {
-                self.playlist_filter.clear();
-            }
-        }
-
-        // Playlist type-to-jump: when the playlist sub-window has soft
-        // focus, bare-letter keys move the selection to the next entry
-        // whose title starts with that letter. The bare-letter transport
-        // hotkeys above already short-circuit on `playlist_focused`, so
-        // pressing `n` here jumps instead of moving to the next track.
-        // Captured inside the closure, dispatched outside (mutates self).
-        let jump_char = if playlist_focused {
-            ctx.input(|i| {
-                if i.modifiers.any() {
-                    return None;
-                }
-                for (key, c) in Self::JUMP_LETTERS {
-                    if i.key_pressed(*key) {
-                        return Some(*c);
-                    }
-                }
-                None
-            })
-        } else {
-            None
-        };
-        if let Some(c) = jump_char {
-            self.jump_in_playlist(c);
-        }
-
-        // Shift+L / Ctrl+Shift+O: Open a folder picker. Read modifier
-        // state inside the closure, open the (blocking) dialog and ingest
-        // outside so we can mutate `self`. The existing `L` handler
-        // requires `!i.modifiers.any()`, so Shift+L doesn't double-fire it.
-        let wants_folder = ctx.input(|i| {
-            let shift_l = i.key_pressed(egui::Key::L)
-                && i.modifiers.shift
-                && !i.modifiers.ctrl
-                && !i.modifiers.alt;
-            let ctrl_shift_o = i.key_pressed(egui::Key::O) && i.modifiers.ctrl && i.modifiers.shift;
-            shift_l || ctrl_shift_o
-        });
-        if wants_folder && let Some(folder) = rfd::FileDialog::new().pick_folder() {
-            // Folder picker = "Add Folder…" — append without interrupting.
-            self.ingest_files(&[folder], ctx, false);
-        }
-
-        // J: jump-to-file (Winamp parity). Opens the playlist filter
-        // overlay focused so the user types a fragment and presses Enter
-        // to play the first match. Suppressed when the playlist has soft
-        // focus — bare `j` drives type-to-jump there instead.
-        let wants_jump =
-            !playlist_focused && ctx.input(|i| i.key_pressed(egui::Key::J) && !i.modifiers.any());
-        if wants_jump {
-            self.windows.set_playlist_visible(true);
-            self.playlist_filter_open = true;
-            self.playlist_filter_focus_pending = true;
-        }
-
-        // Ctrl+L: open the "Add URL…" dialog (Winamp parity — Ctrl+L
-        // opened the location box that accepted both file paths and
-        // HTTP/Shoutcast URLs). Plain L is already taken by the
-        // playlist type-to-jump handler, hence the modifier gate.
-        let wants_url_dialog = ctx.input(|i| {
-            i.modifiers.ctrl
-                && !i.modifiers.alt
-                && !i.modifiers.shift
-                && i.key_pressed(egui::Key::L)
-        });
-        if wants_url_dialog && self.url_dialog.is_none() {
-            self.url_dialog = Some(crate::url_dialog::UrlDialog::new());
-        }
-
-        // Ctrl+T: Toggle always-on-top (Winamp parity). Hoisted out of
-        // the `ctx.input` closure so we can call `send_viewport_cmd`
-        // alongside the state flip without re-borrowing `ctx`.
-        let wants_aot_toggle = ctx.input(|i| {
-            i.modifiers.ctrl
-                && !i.modifiers.alt
-                && !i.modifiers.shift
-                && i.key_pressed(egui::Key::T)
-        });
-        if wants_aot_toggle {
-            self.always_on_top = !self.always_on_top;
-            let level = if self.always_on_top {
-                egui::WindowLevel::AlwaysOnTop
-            } else {
-                egui::WindowLevel::Normal
-            };
-            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+            C::EqAuto => self.toggle_eq_auto(),
         }
     }
 
-    /// Render the hotkey cheat-sheet overlay. Two columns of (key,
-    /// action) rows, dark panel with the skin's accent green border,
-    /// centered horizontally and pinned just under the title bar. Click
-    /// anywhere outside the panel to dismiss; same with Escape or
-    /// pressing F1 / `?` again.
-    ///
-    /// `HOTKEY_ROWS` is the single source of truth: every shortcut
-    /// wired up in `handle_keyboard` lands here, in roughly the order
-    /// the user would discover them (transport → file → navigation
-    /// → volume / seek → windows → meta). Adding a new hotkey means
-    /// editing exactly one place.
-    pub(super) fn paint_hotkey_overlay(&mut self, ctx: &egui::Context) {
-        const ROWS: &[(&str, &str)] = &[
-            ("Z X C V B", "Prev / Play / Pause / Stop / Next"),
-            ("Space", "Play / Pause"),
-            ("S", "Stop"),
-            ("Shift+S", "Stop after current"),
-            ("N / P", "Next / Previous track"),
-            ("R", "Cycle repeat"),
-            ("M", "Mute toggle"),
-            // The skin font shipped by base-2.91 doesn't carry the
-            // U+2191..U+2193 arrow glyphs — they render as tofu boxes.
-            // Spell them out so the cheat-sheet stays legible on any
-            // skin, including the bundled default.
-            ("Up / Down", "Volume ±5 % (Shift: ±1 %)"),
-            ("Left / Right", "Seek ±5 s (Shift: ±30 s)"),
-            ("L / Ctrl+O", "Open file…"),
-            ("Shift+L", "Open folder…"),
-            ("Ctrl+L", "Open URL…"),
-            ("J", "Jump to file"),
-            ("Ctrl+F", "Filter playlist"),
-            ("Alt+E", "Toggle playlist"),
-            ("Alt+G", "Toggle equalizer"),
-            ("Alt+M", "Window shade"),
-            ("Alt+S", "Load .wsz skin…"),
-            ("Ctrl+T", "Toggle always on top"),
-            ("Drag-drop", "Add files / folders"),
-            ("F1 / ?", "This help"),
-            ("Esc", "Dismiss"),
-        ];
-
-        let screen = ctx.screen_rect();
-        let panel_w = (screen.width() - 8.0).clamp(240.0, 270.0);
-        let row_h = 12.0;
-        let n = ROWS.len() as f32;
-        let panel_h = row_h * n + 18.0; // top + bottom padding
-        let panel_x = screen.center().x - panel_w / 2.0;
-        let panel_y = screen.min.y + 14.0; // sit under the title strip
-        let panel =
-            egui::Rect::from_min_size(egui::pos2(panel_x, panel_y), egui::vec2(panel_w, panel_h));
-
-        let painter = ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Foreground,
-            egui::Id::new("hotkey_overlay"),
+    /// Open Winamp's Jump to file box over a snapshot of the playlist.
+    pub(super) fn open_jump_dialog(&mut self) {
+        let fmt = &self.config.playlist_display_format;
+        let rows = self
+            .playlist
+            .entries()
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (i, e.format_display(fmt)))
+            .collect();
+        self.jump_dialog = Some(crate::jump_dialog::JumpDialog::new(
+            rows,
+            self.playlist.current_index(),
         ));
-        painter.rect_filled(
-            panel,
-            2.0,
-            egui::Color32::from_rgba_unmultiplied(15, 15, 15, 240),
-        );
-        painter.rect_stroke(
-            panel,
-            2.0,
-            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(60, 220, 100)),
-        );
+    }
 
-        // Title strip at the top of the panel.
-        let title_pos = egui::pos2(panel.center().x, panel.min.y + 7.0);
-        painter.text(
-            title_pos,
-            egui::Align2::CENTER_CENTER,
-            "OneAmp keyboard shortcuts",
-            egui::FontId::proportional(10.0),
-            egui::Color32::from_rgb(180, 240, 180),
-        );
-
-        // Two columns: keys on the left, actions on the right, with a
-        // ratio that keeps long action labels readable. Each row is
-        // painted independently so the panel survives skin-font absence.
-        let key_col_x = panel.min.x + 10.0;
-        let action_col_x = panel.min.x + 92.0;
-        for (i, (key, action)) in ROWS.iter().enumerate() {
-            let y = panel.min.y + 16.0 + i as f32 * row_h + row_h / 2.0;
-            painter.text(
-                egui::pos2(key_col_x, y),
-                egui::Align2::LEFT_CENTER,
-                *key,
-                egui::FontId::proportional(9.0),
-                egui::Color32::from_rgb(120, 220, 120),
-            );
-            painter.text(
-                egui::pos2(action_col_x, y),
-                egui::Align2::LEFT_CENTER,
-                *action,
-                egui::FontId::proportional(9.0),
-                egui::Color32::from_rgb(220, 220, 220),
-            );
+    /// Shift every selected entry one row up or down, keeping the
+    /// selection on them. Blocked at the edges so the block keeps shape.
+    fn move_selection(&mut self, up: bool) {
+        let selected: Vec<usize> = self.playlist.selected_indices().iter().copied().collect();
+        let n = self.playlist.len();
+        let blocked = if up {
+            selected.first() == Some(&0)
+        } else {
+            selected.last() == Some(&(n.saturating_sub(1)))
+        };
+        if selected.is_empty() || blocked {
+            return;
         }
-
-        // Click-outside-to-dismiss: detect a fresh primary-button press
-        // this frame and dismiss if its position fell outside the panel.
-        // Cheaper than spinning up an Area + Sense::click for the whole
-        // viewport, and lets the rest of the player keep handling its
-        // own clicks normally.
-        let outside_click = ctx.input(|i| {
-            i.pointer.any_pressed()
-                && i.pointer
-                    .interact_pos()
-                    .map(|p| !panel.contains(p))
-                    .unwrap_or(false)
-        });
-        if outside_click {
-            self.show_hotkeys = false;
+        self.remember_for_undo();
+        if up {
+            for &i in &selected {
+                self.playlist.move_entry(i, i - 1);
+            }
+        } else {
+            for &i in selected.iter().rev() {
+                self.playlist.move_entry(i, i + 1);
+            }
         }
+        if let Some(&first) = self.playlist.selected_indices().iter().next() {
+            self.windows.scroll_playlist_to(first);
+        }
+    }
+
+    /// Keyboard cheat-sheet, generated from the active keymap, in its
+    /// own OS window so it isn't clipped by the 275×116 player.
+    pub(super) fn show_hotkey_window(&mut self, ctx: &egui::Context) {
+        let rows = keymap::help_rows(self.config.key_profile);
+        let profile = match self.config.key_profile {
+            keymap::KeyProfile::WinampClassic => "Winamp Classic",
+            keymap::KeyProfile::OneAmpLegacy => "OneAmp 1.0",
+        };
+        let mut open = true;
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("oneamp_hotkeys"),
+            egui::ViewportBuilder::default()
+                .with_title("OneAmp — Keyboard shortcuts")
+                .with_inner_size([440.0, 520.0]),
+            |vctx, _| {
+                crate::dialog_util::apply_native_ppp(vctx);
+                if vctx
+                    .input(|i| i.viewport().close_requested() || i.key_pressed(egui::Key::Escape))
+                {
+                    open = false;
+                }
+                egui::CentralPanel::default().show(vctx, |ui| {
+                    ui.label(format!("Profile: {profile} (Preferences > Shortcuts)"));
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for (scope, title) in [
+                            (keymap::Scope::Global, "Everywhere"),
+                            (keymap::Scope::Playlist, "Playlist window"),
+                            (keymap::Scope::Equalizer, "Equalizer window"),
+                        ] {
+                            ui.add_space(6.0);
+                            ui.strong(title);
+                            egui::Grid::new(title).striped(true).show(ui, |ui| {
+                                for (s, keys, label) in &rows {
+                                    if *s == scope {
+                                        ui.monospace(keys);
+                                        ui.label(*label);
+                                        ui.end_row();
+                                    }
+                                }
+                            });
+                        }
+                    });
+                });
+            },
+        );
+        self.show_hotkeys = open;
     }
 
     /// Handle file drops. Files with an audio extension are added to the
