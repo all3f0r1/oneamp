@@ -13,6 +13,7 @@ mod platform;
 mod platform_detection;
 mod preset_name_dialog;
 mod resume_store;
+mod session;
 mod skin_thumbnails;
 mod skins;
 mod tag_editor_dialog;

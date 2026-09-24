@@ -44,6 +44,11 @@ pub struct PlaylistEntry {
     /// deserialize with `None`.
     #[serde(default)]
     pub genre: Option<String>,
+    /// The file couldn't be found when the entry was restored (drive
+    /// unplugged, file moved). Kept in the list and drawn dimmed rather
+    /// than dropped. Runtime-only.
+    #[serde(skip)]
+    pub unavailable: bool,
 }
 
 impl PlaylistEntry {
@@ -58,6 +63,7 @@ impl PlaylistEntry {
             tracknumber: None,
             year: None,
             genre: None,
+            unavailable: false,
         }
     }
 
@@ -78,6 +84,7 @@ impl PlaylistEntry {
             tracknumber: None,
             year: None,
             genre: None,
+            unavailable: false,
         }
     }
 
@@ -772,6 +779,11 @@ impl Playlist {
         self.queue.iter().position(|&i| i == index).map(|p| p + 1)
     }
 
+    /// Queued entry indices, next-to-play first.
+    pub fn queue(&self) -> &[usize] {
+        &self.queue
+    }
+
     /// Number of entries currently queued.
     pub fn queue_len(&self) -> usize {
         self.queue.len()
@@ -1455,6 +1467,7 @@ mod tests {
             tracknumber: None,
             year: None,
             genre: None,
+            unavailable: false,
         }
     }
 

@@ -515,6 +515,13 @@ pub struct OneAmpApp {
     /// (especially on container-seekable codecs that re-probe on
     /// open).
     pending_resume: Option<(std::path::PathBuf, f32)>,
+    /// Current track and playhead restored from the last session,
+    /// consumed by the first `TrackLoaded` (seeks there if it's the same
+    /// file). Playback itself never auto-starts.
+    session_resume: Option<(std::path::PathBuf, f32)>,
+    /// Session as last written, to skip redundant saves.
+    saved_session: crate::session::Session,
+    session_checked_at: std::time::Instant,
 }
 
 impl OneAmpApp {
@@ -569,10 +576,27 @@ impl OneAmpApp {
             shuffle_enabled: config.playback.shuffle_enabled,
         };
 
-        // The playlist is intentionally session-only: every launch starts
-        // empty. Any files the user wants from the previous session come
-        // back via "Add files…", drag-drop, or "Open with OneAmp".
-        let playlist = Playlist::default();
+        // Restore the previous listening session: playlist, current
+        // track, queue and playhead. Missing files stay, flagged.
+        let saved_session = crate::session::default_path()
+            .map(|p| crate::session::Session::load(&p))
+            .unwrap_or_default();
+        let mut playlist = Playlist::default();
+        let mut entries = saved_session.entries.clone();
+        let mut unavailable = 0;
+        for e in entries.iter_mut() {
+            e.unavailable = crate::session::is_unavailable(&e.path);
+            unavailable += usize::from(e.unavailable);
+        }
+        playlist.add_entries(entries);
+        playlist.set_current_index(saved_session.current);
+        for &q in &saved_session.queue {
+            playlist.queue_track(q);
+        }
+        let session_resume = playlist
+            .current_entry()
+            .filter(|_| saved_session.position_secs > 1.0)
+            .map(|e| (e.path.clone(), saved_session.position_secs));
 
         let skin = load_skin_from_config(
             config.skin_path.as_deref(),
@@ -681,7 +705,7 @@ impl OneAmpApp {
         let mut menu_bindings: HashMap<MenuId, MenuCommand> = HashMap::new();
         let mac_menu = MacMenuBar::install(&mut menu_bindings);
         let tray = TrayService::install(&mut menu_bindings);
-        Self {
+        let mut app = Self {
             state,
             audio,
             playlist,
@@ -738,6 +762,64 @@ impl OneAmpApp {
                 .unwrap_or_default(),
             last_resume_save_at: None,
             pending_resume: None,
+            session_resume,
+            saved_session,
+            session_checked_at: std::time::Instant::now(),
+        };
+        if unavailable > 0 {
+            app.push_toast(
+                format!("{unavailable} playlist file(s) not found"),
+                std::time::Duration::from_millis(3000),
+            );
+        }
+        app
+    }
+
+    /// Current listening session, as it would be restored next launch.
+    fn live_session(&self) -> crate::session::Session {
+        let current = self.playlist.current_index();
+        // Until the restored track is played, keep its saved playhead
+        // rather than the engine's idle 0.
+        let position_secs = match (&self.session_resume, self.playlist.current_entry()) {
+            (Some((path, pos)), Some(e)) if &e.path == path => *pos,
+            _ if self.state.current_track.as_ref().map(|t| &t.path)
+                == self.playlist.current_entry().map(|e| &e.path) =>
+            {
+                self.state.position.0
+            }
+            _ => 0.0,
+        };
+        crate::session::Session {
+            entries: self.playlist.entries().to_vec(),
+            current,
+            queue: self.playlist.queue().to_vec(),
+            position_secs,
+        }
+    }
+
+    /// Write the session if it changed. `force` skips the throttle
+    /// (exit); otherwise it runs at most every 5 s so a crash loses
+    /// little without writing on every frame.
+    fn save_session(&mut self, force: bool) {
+        const INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+        if !force && self.session_checked_at.elapsed() < INTERVAL {
+            return;
+        }
+        self.session_checked_at = std::time::Instant::now();
+        let live = self.live_session();
+        // Position alone moving by < 5 s isn't worth a write.
+        let same = live.entries == self.saved_session.entries
+            && live.current == self.saved_session.current
+            && live.queue == self.saved_session.queue
+            && (live.position_secs - self.saved_session.position_secs).abs() < 5.0;
+        if same && !force {
+            return;
+        }
+        if let Some(path) = crate::session::default_path() {
+            match live.save(&path) {
+                Ok(()) => self.saved_session = live,
+                Err(e) => eprintln!("Failed to save session: {}", e),
+            }
         }
     }
 
@@ -1592,6 +1674,7 @@ impl eframe::App for OneAmpApp {
         // smooth; once the deadline is reached we Pause and clear the
         // armed state so a subsequent Play doesn't re-trigger the timer.
         self.tick_sleep_timer();
+        self.save_session(false);
 
         ctx.request_repaint();
     }
@@ -1618,6 +1701,7 @@ impl eframe::App for OneAmpApp {
         // touched in the last 300 ms still hits disk. Reuses the same
         // mirroring + atomic-write path the debounced ticks use.
         self.flush_config();
+        self.save_session(true);
         // Resume store: one final write on shutdown so the in-memory
         // upserts since the last throttled save reach disk. Best-effort
         // — a write failure here just means the user's last 0-15 s of

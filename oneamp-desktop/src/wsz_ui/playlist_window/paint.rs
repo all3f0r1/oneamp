@@ -334,6 +334,11 @@ impl PlaylistWindow {
             } else {
                 normal_color
             };
+            let row_color = if entry.unavailable {
+                row_color.gamma_multiply(0.45)
+            } else {
+                row_color
+            };
             let row_font = pledit_font_id(self.renderer.get_skin(), 9.0 * scale);
             let row_left = row_rect.min + Vec2::new(4.0 * scale, 1.0 * scale);
             let row_right = Pos2::new(row_rect.max.x - 4.0 * scale, row_rect.min.y + 1.0 * scale);

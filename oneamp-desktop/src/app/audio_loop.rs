@@ -258,6 +258,22 @@ impl OneAmpApp {
                     {
                         self.pending_resume = Some((track.path.clone(), saved));
                     }
+                    // Restored session: the first load of the track that
+                    // was current at exit picks up where it stopped.
+                    if let Some((path, pos)) = self.session_resume.take()
+                        && path == track.path
+                    {
+                        self.pending_resume = Some((path, pos));
+                    }
+                    // A file that loads is available again.
+                    if let Some(e) = self
+                        .playlist
+                        .entries_mut()
+                        .iter_mut()
+                        .find(|e| e.path == track.path)
+                    {
+                        e.unavailable = false;
+                    }
                 }
                 oneamp_core::AudioEvent::IcyMetadata(title) => {
                     // Internet-radio "now playing" update. Rewrite the
