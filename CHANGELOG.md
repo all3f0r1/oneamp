@@ -4,6 +4,37 @@ All notable changes to OneAmp are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] — 2026-09-24
+
+### Fixed
+- Settings autosave never fired while the app was running: the per-frame
+  drift check re-armed the 300 ms debounce every frame, so EQ bands,
+  preamp, EQ on/off, volume and other preferences only reached disk on a
+  clean exit. The debounce now starts on the first divergence only.
+- A failed config write was treated as done, so nothing retried it. The
+  pending state is now kept, retried every 5 s, and a toast reports it.
+- Launching OneAmp without files while it was already running opened a
+  second instance, which could later overwrite the first one's settings
+  with stale values. A bare relaunch now raises the existing window.
+- "Stop after current track" was bypassed by gapless transitions,
+  crossfades and Repeat One/All. The engine now honours it at end of
+  stream and drops any preloaded next track.
+- Long-file resume positions were only written on exit; a crash lost the
+  whole session's progress. They are now written on each 15 s tick.
+- EQ sliders: clicking a thumb changed its value (input used the 63 px
+  track instead of the 52 px thumb travel). Input and painting now share
+  one conversion and the grab point is kept during the drag.
+- EQ fills: positive and negative gains of the same magnitude shared a
+  texture-cache key, so a band could show the wrong-sign fill colour.
+
+### Changed
+- Dependencies: `crossbeam-epoch`, `rustls`, `ringbuf`, `webbrowser`,
+  `quick-xml` (wayland), `notify-rust` and others bumped for RustSec
+  advisories; remaining unfixable transitive advisories triaged in
+  `.cargo/audit.toml`.
+- Code adjusted for Rust 1.98 Clippy lints (`as_chunks`, float literal
+  fallback).
+
 ## [1.0.2] — 2026-07-15
 
 ### Fixed
