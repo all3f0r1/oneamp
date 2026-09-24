@@ -313,6 +313,24 @@ pub struct AppConfig {
     /// pop song to 2 m 14 s would be more annoying than useful.
     #[serde(default)]
     pub resume_long_files: bool,
+    /// Window layout: detached mode, sub-window offsets and playlist
+    /// height. Restored at startup.
+    #[serde(default)]
+    pub windows: WindowLayoutConfig,
+}
+
+/// Persisted window layout. Offsets are relative to the main window's
+/// top-left in logical points; `None` = docked under the player.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct WindowLayoutConfig {
+    #[serde(default)]
+    pub detached: bool,
+    #[serde(default)]
+    pub equalizer_offset: Option<[f32; 2]>,
+    #[serde(default)]
+    pub playlist_offset: Option<[f32; 2]>,
+    #[serde(default)]
+    pub playlist_height: Option<u32>,
 }
 
 /// Default template applied when a config lacks `playlist_display_format`.
@@ -379,6 +397,7 @@ impl Default for AppConfig {
             playlist_display_format: default_playlist_format(),
             show_remaining: false,
             resume_long_files: false,
+            windows: WindowLayoutConfig::default(),
         }
     }
 }
@@ -549,6 +568,7 @@ impl AppConfig {
         pull!(playlist_display_format);
         pull!(show_remaining);
         pull!(resume_long_files);
+        pull!(windows);
     }
 
     /// Save configuration to file. Uses a write-to-tmp + rename dance so a

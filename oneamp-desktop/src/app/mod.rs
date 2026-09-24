@@ -594,6 +594,14 @@ impl OneAmpApp {
         windows.set_equalizer_visible(config.show_equalizer);
         windows.set_playlist_visible(config.show_playlist);
         windows.set_shade_mode(config.shade_mode);
+        windows.set_detached(config.windows.detached && detached_windows_supported());
+        windows.set_subwindow_offsets([
+            config.windows.equalizer_offset,
+            config.windows.playlist_offset,
+        ]);
+        if let Some(h) = config.windows.playlist_height {
+            windows.set_playlist_height(h);
+        }
         windows
             .main_window_mut()
             .set_visualizer_mode(visualizer_from_config(config.visualizer_mode));
@@ -1147,6 +1155,15 @@ impl OneAmpApp {
     }
 }
 
+/// Detached windows need the app to position its own windows, which
+/// Wayland forbids (`OuterPosition` is ignored), so the mode is limited
+/// to X11, Windows and macOS.
+pub(crate) fn detached_windows_supported() -> bool {
+    !(cfg!(target_os = "linux")
+        && crate::platform_detection::PlatformInfo::detect().display_server
+            == Some(crate::platform_detection::DisplayServer::Wayland))
+}
+
 impl eframe::App for OneAmpApp {
     /// Clear the framebuffer with full transparency so the alpha mask baked
     /// into `main.bmp` (from the skin's `region.txt` `[Normal]` polygon)
@@ -1259,7 +1276,9 @@ impl eframe::App for OneAmpApp {
         // then `Some(info)` exactly once, then `None` forever after.
         self.poll_update_checker();
 
-        // Handle user input
+        // Handle user input. Keys typed into a detached EQ / playlist
+        // window are replayed into the root input first.
+        self.windows.inject_forwarded_input(ctx);
         self.handle_keyboard(ctx);
         self.handle_drops(ctx);
         self.windows.handle_shortcuts(ctx);

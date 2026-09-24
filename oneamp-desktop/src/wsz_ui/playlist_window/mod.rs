@@ -361,6 +361,15 @@ impl PlaylistWindow {
         }
     }
 
+    /// Resize-handle height, ignoring shade. Persisted across launches.
+    pub fn full_height_skin(&self) -> u32 {
+        self.height_skin
+    }
+
+    pub fn set_full_height_skin(&mut self, h: u32) {
+        self.height_skin = h.clamp(PL_MIN_HEIGHT, PL_MAX_HEIGHT);
+    }
+
     /// Render the playlist as a docked area inside the main viewport at
     /// `dock_y_skin` (skin-space y; 116 below main alone, 232 below main+EQ).
     #[allow(clippy::too_many_arguments)]

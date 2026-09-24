@@ -61,6 +61,9 @@ pub enum MainWindowAction {
     ToggleEqualizer,
     /// Toggle playlist window (PL toggle).
     TogglePlaylist,
+    /// Switch between the docked single-window stack and detached,
+    /// magnetically snapping EQ / playlist windows.
+    ToggleDetachedWindows,
     /// Toggle "Always on Top" — the app sends the matching
     /// `ViewportCommand::WindowLevel` and persists the new state.
     ToggleAlwaysOnTop,

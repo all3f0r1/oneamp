@@ -588,6 +588,7 @@ pub struct MenuContext {
     pub shade_mode: bool,
     pub eq_visible: bool,
     pub playlist_visible: bool,
+    pub detached_windows: bool,
     pub visualizer_mode: VisualizerMode,
     pub visualizer_options: super::visualization::VisualizerOptions,
     pub user_scale: Option<f32>,
@@ -748,6 +749,11 @@ pub fn build_menu_items(ctx: &MenuContext) -> Vec<MenuItem> {
         MenuItem::toggle("Mini mode (shade)", A::ToggleShade, ctx.shade_mode).with_separator(),
         MenuItem::toggle("Equalizer", A::ToggleEqualizer, ctx.eq_visible),
         MenuItem::toggle("Playlist", A::TogglePlaylist, ctx.playlist_visible),
+        MenuItem::toggle(
+            "Detached windows",
+            A::ToggleDetachedWindows,
+            ctx.detached_windows,
+        ),
         MenuItem::toggle("Always on top", A::ToggleAlwaysOnTop, ctx.always_on_top).with_separator(),
         MenuItem::action("Change skin…", A::PickSkin),
     ];

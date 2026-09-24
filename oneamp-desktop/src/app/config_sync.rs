@@ -60,6 +60,7 @@ impl OneAmpApp {
         self.config.shade_mode = self.windows.is_shade_mode();
         self.config.show_equalizer = self.windows.is_equalizer_visible();
         self.config.show_playlist = self.windows.is_playlist_visible();
+        self.config.windows = self.live_window_layout();
         self.config.visualizer_mode =
             visualizer_to_config(self.windows.main_window_mut().visualizer_mode());
         self.config.show_remaining = self.windows.main_window_mut().show_remaining();
@@ -83,6 +84,17 @@ impl OneAmpApp {
                     );
                 }
             }
+        }
+    }
+
+    /// Snapshot of the coordinator's window layout in config form.
+    fn live_window_layout(&self) -> crate::config::WindowLayoutConfig {
+        let [equalizer_offset, playlist_offset] = self.windows.subwindow_offsets();
+        crate::config::WindowLayoutConfig {
+            detached: self.windows.is_detached(),
+            equalizer_offset,
+            playlist_offset,
+            playlist_height: Some(self.windows.playlist_height()),
         }
     }
 
@@ -132,6 +144,9 @@ impl OneAmpApp {
             changed = true;
         }
         if self.config.show_playlist != self.windows.is_playlist_visible() {
+            changed = true;
+        }
+        if self.config.windows != self.live_window_layout() {
             changed = true;
         }
         let live_vis = visualizer_to_config(self.windows.main_window_mut().visualizer_mode());

@@ -99,6 +99,17 @@ impl OneAmpApp {
             MainWindowAction::TogglePlaylist => {
                 self.windows.toggle_playlist();
             }
+            MainWindowAction::ToggleDetachedWindows => {
+                if super::detached_windows_supported() {
+                    let on = !self.windows.is_detached();
+                    self.windows.set_detached(on);
+                } else {
+                    self.push_toast(
+                        "Detached windows need X11 (Wayland can't place windows)",
+                        std::time::Duration::from_millis(3000),
+                    );
+                }
+            }
             MainWindowAction::ToggleAlwaysOnTop => {
                 self.always_on_top = !self.always_on_top;
                 // Egui exposes the policy through ViewportCommand. Some
