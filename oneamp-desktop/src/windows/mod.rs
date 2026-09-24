@@ -121,6 +121,8 @@ pub struct WszWindowCoordinator {
     /// whichever OS window has keyboard focus.
     forwarded_keys: Vec<egui::Event>,
     forwarded_modifiers: egui::Modifiers,
+    /// Files dropped onto a detached sub-window, for the app to add.
+    forwarded_drops: Vec<std::path::PathBuf>,
 }
 
 impl WszWindowCoordinator {
@@ -162,6 +164,7 @@ impl WszWindowCoordinator {
             title_press: None,
             forwarded_keys: Vec::new(),
             forwarded_modifiers: egui::Modifiers::NONE,
+            forwarded_drops: Vec::new(),
         }
     }
 
@@ -666,15 +669,22 @@ impl WszWindowCoordinator {
         if actual.is_some_and(|a| (a - size).length() > 0.5) {
             cctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         }
-        let (pressed, keys, modifiers) = cctx.input(|i| {
+        let (pressed, keys, modifiers, drops) = cctx.input(|i| {
             let keys: Vec<egui::Event> = i
                 .events
                 .iter()
                 .filter(|e| matches!(e, egui::Event::Key { .. }))
                 .cloned()
                 .collect();
-            (i.pointer.primary_pressed(), keys, i.modifiers)
+            let drops: Vec<std::path::PathBuf> = i
+                .raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect();
+            (i.pointer.primary_pressed(), keys, i.modifiers, drops)
         });
+        self.forwarded_drops.extend(drops);
         if pressed {
             self.active_subwindow = match win {
                 Win::Main => ActiveSubWindow::Main,
@@ -688,6 +698,10 @@ impl WszWindowCoordinator {
             cctx.request_repaint_of(egui::ViewportId::ROOT);
         }
         self.track_sub_window(cctx, win);
+    }
+
+    pub fn take_forwarded_drops(&mut self) -> Vec<std::path::PathBuf> {
+        std::mem::take(&mut self.forwarded_drops)
     }
 
     /// Replay key events captured by detached sub-windows into the root

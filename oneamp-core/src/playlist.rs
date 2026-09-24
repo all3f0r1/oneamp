@@ -67,6 +67,40 @@ impl PlaylistEntry {
         }
     }
 
+    /// Entry for `path` with its tags read from disk. Unreadable files
+    /// still get an entry titled with the file name.
+    pub fn from_file(path: PathBuf) -> Self {
+        let mut entry = Self::new(path.clone());
+        match TrackInfo::from_file(&path) {
+            Ok(info) => {
+                // Title falls back to the filename so an untagged file still
+                // shows *something*. Keep the metadata-derived title when
+                // present — the template formatter prefers `{artist} -
+                // {title}` and would otherwise drop into the filename
+                // fallback for half the library.
+                entry.title = info.title.or_else(|| {
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(str::to_string)
+                });
+                entry.artist = info.artist;
+                entry.album = info.album;
+                entry.tracknumber = info.tracknumber;
+                entry.year = info.year;
+                entry.genre = info.genre;
+                entry.duration = info.duration_secs;
+            }
+            _ => {
+                entry.title = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(str::to_string);
+            }
+        }
+
+        entry
+    }
+
     /// Create a playlist entry with metadata
     pub fn with_metadata(
         path: PathBuf,
@@ -359,34 +393,7 @@ impl Playlist {
             return;
         }
 
-        let mut entry = PlaylistEntry::new(path.clone());
-        match TrackInfo::from_file(&path) {
-            Ok(info) => {
-                // Title falls back to the filename so an untagged file still
-                // shows *something*. Keep the metadata-derived title when
-                // present — the template formatter prefers `{artist} -
-                // {title}` and would otherwise drop into the filename
-                // fallback for half the library.
-                entry.title = info.title.or_else(|| {
-                    path.file_name()
-                        .and_then(|n| n.to_str())
-                        .map(str::to_string)
-                });
-                entry.artist = info.artist;
-                entry.album = info.album;
-                entry.tracknumber = info.tracknumber;
-                entry.year = info.year;
-                entry.genre = info.genre;
-                entry.duration = info.duration_secs;
-            }
-            _ => {
-                entry.title = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(str::to_string);
-            }
-        }
-
+        let entry = PlaylistEntry::from_file(path);
         self.entries.push(entry);
         if self.entries.len() == 1 {
             self.current_index = Some(0);

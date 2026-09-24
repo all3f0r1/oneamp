@@ -28,12 +28,20 @@ impl OneAmpApp {
                 }
             }
             MainWindowAction::OpenFile => {
-                if let Some(path) = rfd::FileDialog::new()
-                    .add_filter("Audio", AUDIO_EXTENSIONS)
-                    .pick_file()
+                // Winamp's "Play file": the picked files replace the
+                // playlist and start playing. Ctrl+Z restores the list.
+                let exts: Vec<&str> = AUDIO_EXTENSIONS
+                    .iter()
+                    .copied()
+                    .chain(["m3u", "m3u8", "pls"])
+                    .collect();
+                if let Some(paths) = rfd::FileDialog::new()
+                    .add_filter("Audio and playlists", &exts)
+                    .pick_files()
                 {
-                    self.playlist.add_track(path.clone());
-                    self.play_audio_path(path);
+                    self.remember_for_undo();
+                    self.playlist.clear();
+                    self.start_import(paths, true);
                 }
             }
             MainWindowAction::OpenFolder => {
@@ -44,7 +52,7 @@ impl OneAmpApp {
                     // user just told us "play these tracks". `force_play
                     // = false` mirrors Winamp's "Add Folder…" — appending
                     // a folder mid-playback doesn't interrupt the song.
-                    self.ingest_files(&[folder], ctx, false);
+                    self.start_import(vec![folder], false);
                 }
             }
             MainWindowAction::ToggleShade => {
@@ -377,7 +385,7 @@ impl OneAmpApp {
                 self.jump_in_playlist(*c);
                 continue;
             }
-            if chord.key == egui::Key::Escape && self.show_hotkeys {
+            if chord.key == egui::Key::Escape && (self.cancel_import() || self.show_hotkeys) {
                 self.show_hotkeys = false;
                 continue;
             }
@@ -655,18 +663,20 @@ impl OneAmpApp {
     /// playlist; folders are walked recursively (up to `FOLDER_WALK_MAX_DEPTH`)
     /// for audio files.
     pub(super) fn handle_drops(&mut self, ctx: &egui::Context) {
-        let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
+        let mut dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
             i.raw
                 .dropped_files
                 .iter()
                 .filter_map(|f| f.path.clone())
                 .collect()
         });
+        // Drops onto a detached EQ / playlist window.
+        dropped.extend(self.windows.take_forwarded_drops());
         if !dropped.is_empty() {
             // Drag-drop = silent append in Winamp; we mirror that. Use the
             // file manager's double-click (which goes through IPC) when
             // you want the new file to actually start playing.
-            self.ingest_files(&dropped, ctx, false);
+            self.start_import(dropped, false);
         }
     }
 }

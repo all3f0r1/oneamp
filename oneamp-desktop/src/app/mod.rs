@@ -6,6 +6,7 @@
 mod audio_loop;
 mod config_sync;
 mod eq_auto;
+mod import;
 mod input;
 pub(crate) mod keymap;
 mod menu;
@@ -313,6 +314,8 @@ pub struct OneAmpApp {
     pl_cursor: Option<usize>,
     jump_dialog: Option<crate::jump_dialog::JumpDialog>,
     preferences_open: bool,
+    /// Background add of files / folders / playlist files, if running.
+    import: Option<import::Import>,
     prefs_tab: preferences::PrefsTab,
     /// User preset being renamed in Preferences: (old name, edit buffer).
     prefs_rename: Option<(String, String)>,
@@ -740,6 +743,7 @@ impl OneAmpApp {
             pl_cursor: None,
             jump_dialog: None,
             preferences_open: false,
+            import: None,
             prefs_tab: Default::default(),
             prefs_rename: None,
             undo: Vec::new(),
@@ -1317,7 +1321,7 @@ impl eframe::App for OneAmpApp {
             // (or `oneamp foo.mp3` on the CLI) — the user asked us to play
             // these tracks, so honour that even if something is mid-play
             // (this can only happen on a restore-state launch in practice).
-            self.ingest_files(&paths, ctx, true);
+            self.start_import(paths, true);
         }
         // Drain via local collection so the borrow of `self.ipc_rx`
         // releases before `ingest_files` reborrows `self` mutably.
@@ -1339,7 +1343,7 @@ impl eframe::App for OneAmpApp {
             // always triggered by the user double-clicking a file in their
             // OS file manager. Force playback of the first new track so the
             // double-click feels like "play this now", not "queue this".
-            self.ingest_files(&batch, ctx, true);
+            self.start_import(batch, true);
         }
 
         // Process audio events and forward them to windows
@@ -1363,6 +1367,7 @@ impl eframe::App for OneAmpApp {
         self.windows.inject_forwarded_input(ctx);
         self.handle_keyboard(ctx);
         self.handle_drops(ctx);
+        self.poll_import(ctx);
 
         let spectrum = self.audio.get_spectrum_data();
         let waveform = self.audio.get_waveform_data();
