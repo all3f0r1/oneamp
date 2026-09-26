@@ -4,6 +4,42 @@ All notable changes to OneAmp are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Audiophile audio path: bit-perfect by default, native sample rate, no
+hidden processing.
+
+### Changed
+- Output goes straight to cpal 0.18 (rodio removed). The stream opens at
+  the track's native sample rate in the most precise format the device
+  offers; rodio resampled everything to the device's default rate with
+  linear interpolation. A band-limited FFT resampler (rubato) is used
+  only when the device refuses the native rate.
+- Bit-perfect at neutral settings: balance is unity at centre (the
+  constant-power law cost −3 dB on both channels), the limiter ceiling is
+  0 dBFS with 2 ms lookahead (it was always shaving masters peaking above
+  −1 dBFS, with a zero-attack gain step), the flat EQ and idle loudness
+  shelves are skipped, and TPDF dither is only added when the samples are
+  actually requantized — matched to the device's bit depth.
+- Volume ≤ 100 % acts in the output callback (instant, smoothed); the
+  boost above 100 % goes before the limiter, so it no longer clips.
+- Symphonia 0.6: gapless trimming of MP3/AAC encoder delay and padding,
+  SIMD, hardened demuxers, MP3 silent-frame fix; codec names in the info
+  readout (FLAC, MP3, …).
+- EQ biquads run in f64.
+- The audio callback thread gets real-time priority on Linux (rtkit).
+- Dependencies: lofty 0.25, souvlaki 0.8, dirs 7, indicatif 0.18.
+
+### Added
+- AIFF, CAF and Matroska audio (.mka) playback.
+
+### Fixed
+- Crossfade dropped part of the incoming track whenever the two files
+  used different packet sizes (e.g. MP3 into FLAC), and both decoders
+  shared one set of EQ filter states.
+- Conversion to 16/24-bit devices rounds instead of truncating toward
+  zero, and full scale no longer wraps on 24-bit output.
+
 ## [1.2.0] — 2026-09-26
 
 Playlist editor polish: Winamp's popup menus, time fields and sizing, with

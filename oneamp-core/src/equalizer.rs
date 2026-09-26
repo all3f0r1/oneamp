@@ -1,5 +1,3 @@
-use std::f32::consts::PI;
-
 /// Linear ramp duration applied to biquad coefficients when a band's
 /// configuration changes. ~10 ms is long enough to be inaudible as a
 /// click, short enough not to feel laggy on slider drags. At 44.1 kHz
@@ -34,41 +32,41 @@ pub const EQ_FREQUENCIES: [f32; 10] = [
 #[derive(Debug, Clone)]
 pub struct BiquadFilter {
     // Active coefficients applied to the next sample.
-    b0: f32,
-    b1: f32,
-    b2: f32,
-    a1: f32,
-    a2: f32,
+    b0: f64,
+    b1: f64,
+    b2: f64,
+    a1: f64,
+    a2: f64,
 
     // Target coefficients the active set ramps toward.
-    target_b0: f32,
-    target_b1: f32,
-    target_b2: f32,
-    target_a1: f32,
-    target_a2: f32,
+    target_b0: f64,
+    target_b1: f64,
+    target_b2: f64,
+    target_a1: f64,
+    target_a2: f64,
 
     // Per-sample increment toward target. Zero when no ramp is in flight.
-    step_b0: f32,
-    step_b1: f32,
-    step_b2: f32,
-    step_a1: f32,
-    step_a2: f32,
+    step_b0: f64,
+    step_b1: f64,
+    step_b2: f64,
+    step_a1: f64,
+    step_a2: f64,
 
     /// Samples left in the current ramp. When this hits zero, the active
     /// coefficients are snapped to the targets to eliminate float drift.
     ramp_remaining: u32,
 
     // IIR state for the left channel.
-    x1_l: f32,
-    x2_l: f32,
-    y1_l: f32,
-    y2_l: f32,
+    x1_l: f64,
+    x2_l: f64,
+    y1_l: f64,
+    y2_l: f64,
 
     // IIR state for the right channel.
-    x1_r: f32,
-    x2_r: f32,
-    y1_r: f32,
-    y2_r: f32,
+    x1_r: f64,
+    x2_r: f64,
+    y1_r: f64,
+    y2_r: f64,
 }
 
 impl BiquadFilter {
@@ -105,13 +103,15 @@ impl BiquadFilter {
     /// Compute low-shelf coefficients (RBJ cookbook). `S=1` is baked
     /// in — the "max slope at corner" preset gives the gentlest knee
     /// for a loudness-style filter without ringing.
-    fn compute_low_shelf(sample_rate: f32, frequency: f32, gain_db: f32) -> [f32; 5] {
-        let a = 10_f32.powf(gain_db / 40.0);
-        let omega = 2.0 * PI * frequency / sample_rate;
+    fn compute_low_shelf(sample_rate: f32, frequency: f32, gain_db: f32) -> [f64; 5] {
+        let (sample_rate, frequency, gain_db) =
+            (sample_rate as f64, frequency as f64, gain_db as f64);
+        let a = 10_f64.powf(gain_db / 40.0);
+        let omega = 2.0 * std::f64::consts::PI * frequency / sample_rate;
         let cos_w = omega.cos();
         let sin_w = omega.sin();
         // With S=1: alpha = sin_w / sqrt(2).
-        let alpha = sin_w / std::f32::consts::SQRT_2;
+        let alpha = sin_w / std::f64::consts::SQRT_2;
         let two_sqrt_a_alpha = 2.0 * a.sqrt() * alpha;
         let ap1 = a + 1.0;
         let am1 = a - 1.0;
@@ -127,12 +127,14 @@ impl BiquadFilter {
     }
 
     /// Compute high-shelf coefficients (RBJ cookbook). Same S=1 default.
-    fn compute_high_shelf(sample_rate: f32, frequency: f32, gain_db: f32) -> [f32; 5] {
-        let a = 10_f32.powf(gain_db / 40.0);
-        let omega = 2.0 * PI * frequency / sample_rate;
+    fn compute_high_shelf(sample_rate: f32, frequency: f32, gain_db: f32) -> [f64; 5] {
+        let (sample_rate, frequency, gain_db) =
+            (sample_rate as f64, frequency as f64, gain_db as f64);
+        let a = 10_f64.powf(gain_db / 40.0);
+        let omega = 2.0 * std::f64::consts::PI * frequency / sample_rate;
         let cos_w = omega.cos();
         let sin_w = omega.sin();
-        let alpha = sin_w / std::f32::consts::SQRT_2;
+        let alpha = sin_w / std::f64::consts::SQRT_2;
         let two_sqrt_a_alpha = 2.0 * a.sqrt() * alpha;
         let ap1 = a + 1.0;
         let am1 = a - 1.0;
@@ -150,7 +152,7 @@ impl BiquadFilter {
     /// Helper that stages a target / step / ramp_remaining update from a
     /// freshly computed coefficient set. Used by every public setter so
     /// the ramping policy stays consistent across filter shapes.
-    fn arm_ramp(&mut self, target: [f32; 5], sample_rate: f32) {
+    fn arm_ramp(&mut self, target: [f64; 5], sample_rate: f32) {
         self.target_b0 = target[0];
         self.target_b1 = target[1];
         self.target_b2 = target[2];
@@ -158,7 +160,7 @@ impl BiquadFilter {
         self.target_a2 = target[4];
 
         let ramp = ((sample_rate * COEF_RAMP_SECS).round() as u32).max(1);
-        let inv = (ramp as f32).recip();
+        let inv = (ramp as f64).recip();
         self.step_b0 = (self.target_b0 - self.b0) * inv;
         self.step_b1 = (self.target_b1 - self.b1) * inv;
         self.step_b2 = (self.target_b2 - self.b2) * inv;
@@ -169,7 +171,7 @@ impl BiquadFilter {
 
     /// Helper for snap setters: write target = active = `target` and
     /// clear the ramp.
-    fn snap_to(&mut self, target: [f32; 5]) {
+    fn snap_to(&mut self, target: [f64; 5]) {
         self.b0 = target[0];
         self.b1 = target[1];
         self.b2 = target[2];
@@ -216,9 +218,15 @@ impl BiquadFilter {
 
     /// Compute peaking-EQ coefficients (RBJ cookbook) without touching
     /// state. Returns `(b0, b1, b2, a1, a2)` already normalized by `a0`.
-    fn compute_peaking_eq(sample_rate: f32, frequency: f32, gain_db: f32, q: f32) -> [f32; 5] {
-        let a = 10_f32.powf(gain_db / 40.0);
-        let omega = 2.0 * PI * frequency / sample_rate;
+    fn compute_peaking_eq(sample_rate: f32, frequency: f32, gain_db: f32, q: f32) -> [f64; 5] {
+        let (sample_rate, frequency, gain_db, q) = (
+            sample_rate as f64,
+            frequency as f64,
+            gain_db as f64,
+            q as f64,
+        );
+        let a = 10_f64.powf(gain_db / 40.0);
+        let omega = 2.0 * std::f64::consts::PI * frequency / sample_rate;
         let sin_omega = omega.sin();
         let cos_omega = omega.cos();
         let alpha = sin_omega / (2.0 * q);
@@ -279,6 +287,7 @@ impl BiquadFilter {
     /// Process a stereo sample pair.
     pub fn process_stereo(&mut self, left: f32, right: f32) -> (f32, f32) {
         self.tick_coefs();
+        let (left, right) = (left as f64, right as f64);
 
         let left_out = self.b0 * left + self.b1 * self.x1_l + self.b2 * self.x2_l
             - self.a1 * self.y1_l
@@ -296,7 +305,7 @@ impl BiquadFilter {
         self.y2_r = self.y1_r;
         self.y1_r = right_out;
 
-        (left_out, right_out)
+        (left_out as f32, right_out as f32)
     }
 
     /// Process a single mono sample, advancing *only* the left-channel
@@ -307,6 +316,7 @@ impl BiquadFilter {
     /// channel-count changes.
     pub fn process_mono(&mut self, sample: f32) -> f32 {
         self.tick_coefs();
+        let sample = sample as f64;
 
         let out = self.b0 * sample + self.b1 * self.x1_l + self.b2 * self.x2_l
             - self.a1 * self.y1_l
@@ -315,7 +325,7 @@ impl BiquadFilter {
         self.x1_l = sample;
         self.y2_l = self.y1_l;
         self.y1_l = out;
-        out
+        out as f32
     }
 
     /// `true` while the coefficient ramp is still converging toward
@@ -354,6 +364,7 @@ impl BiquadFilter {
     /// evaluated from the *target* coefficients so that callers don't need
     /// to wait for the ramp to complete. Returns the linear |H(e^jω)|.
     pub(crate) fn target_magnitude(&self, omega: f32) -> f32 {
+        let omega = omega as f64;
         let cos_w = omega.cos();
         let sin_w = omega.sin();
         let cos_2w = (2.0 * omega).cos();
@@ -364,7 +375,7 @@ impl BiquadFilter {
         let den_im = -self.target_a1 * sin_w - self.target_a2 * sin_2w;
         let num_mag2 = num_re * num_re + num_im * num_im;
         let den_mag2 = den_re * den_re + den_im * den_im;
-        (num_mag2 / den_mag2.max(1e-30)).sqrt()
+        (num_mag2 / den_mag2.max(1e-30)).sqrt() as f32
     }
 }
 
@@ -391,6 +402,10 @@ pub struct Equalizer {
     sample_rate: f32,
     /// Whether the equalizer is enabled
     enabled: bool,
+    /// Set while the in-place paths skip the chain because it is
+    /// transparent; the next active buffer starts from a clean state
+    /// instead of seconds-old filter history.
+    bypassed: bool,
 }
 
 impl Equalizer {
@@ -402,6 +417,7 @@ impl Equalizer {
             gains: vec![0.0; 10],
             sample_rate,
             enabled: false,
+            bypassed: true,
         };
 
         // Snap-initialize each filter so the first ~10 ms of playback
@@ -572,10 +588,31 @@ impl Equalizer {
         (l, r)
     }
 
+    /// `true` when the chain cannot alter the signal: disabled, or every
+    /// band at 0 dB with no ramp in flight. A 0 dB peaking biquad is
+    /// unity in theory but not bit-exact in float, so the in-place paths
+    /// skip the chain entirely instead of running it.
+    pub fn is_transparent(&self) -> bool {
+        !self.enabled
+            || (self.gains.iter().all(|&g| g == 0.0) && !self.bands.iter().any(|b| b.ramp_active()))
+    }
+
+    fn bypass_if_transparent(&mut self) -> bool {
+        if self.is_transparent() {
+            self.bypassed = true;
+            return true;
+        }
+        if self.bypassed {
+            self.reset_state();
+            self.bypassed = false;
+        }
+        false
+    }
+
     /// Process a buffer of interleaved stereo samples in place. Zero
     /// allocation per call — caller owns the buffer.
     pub fn process_stereo_in_place(&mut self, samples: &mut [f32]) {
-        if !self.enabled {
+        if self.bypass_if_transparent() {
             return;
         }
         for chunk in samples.as_chunks_mut::<2>().0 {
@@ -597,7 +634,7 @@ impl Equalizer {
     /// right-channel history (provided [`reset_state`] runs on track
     /// boundaries, which the player does).
     pub fn process_mono_in_place(&mut self, samples: &mut [f32]) {
-        if !self.enabled {
+        if self.bypass_if_transparent() {
             return;
         }
         for s in samples.iter_mut() {
@@ -688,6 +725,7 @@ impl Default for Equalizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f32::consts::PI;
 
     #[test]
     fn test_biquad_passthrough() {

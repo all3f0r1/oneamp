@@ -20,7 +20,8 @@ rustdoc-args = ["--enable-index-page", "-Z", "unstable-options"]
 symphonia.workspace = true
 
 # Audio playback (optional, required for audio output)
-rodio = { workspace = true, optional = true }
+cpal = { workspace = true, optional = true }
+rubato = { workspace = true, optional = true }
 
 # Error handling
 anyhow.workspace = true
@@ -41,7 +42,7 @@ ureq.workspace = true
 # FFT for spectrum visualization
 rustfft.workspace = true
 
-# Lock-free SPSC ring for the rodio output hot path
+# Lock-free SPSC ring for the cpal output hot path
 ringbuf.workspace = true
 
 # Wait-free Arc swap for spectrum / waveform publication
@@ -51,10 +52,16 @@ arc-swap.workspace = true
 serde = { workspace = true, features = ["derive"], optional = true }
 serde_json = { workspace = true, optional = true }
 
+# Real-time scheduling for the cpal callback thread (via rtkit on
+# D-Bus) — fewer xruns under load. libdbus is already a build/runtime
+# dependency of the desktop app (MPRIS), so this adds nothing new.
+[target.'cfg(target_os = "linux")'.dependencies]
+cpal = { workspace = true, optional = true, features = ["realtime-dbus"] }
+
 [features]
 default = ["audio", "serialization"]
 # Audio feature: enables audio playback and ALSA support
 # Disable this for documentation builds or minimal builds
-audio = ["rodio"]
+audio = ["cpal", "rubato"]
 # Serialization feature for presets and configuration
 serialization = ["serde", "serde_json"]

@@ -11,8 +11,8 @@ description: |
 
   Features:
     * Symphonia decoding (MP3, FLAC, OGG Vorbis, WAV, AAC, M4A / MP4,
-      ALAC) with rodio / cpal output over a lock-free SPSC ring —
-      no mutex on the cpal real-time callback.
+      ALAC, AIFF, CAF, MKA) with bit-perfect cpal output at the track's
+      native sample rate over a lock-free SPSC ring.
     * Native pixel-perfect rendering of Winamp `.wsz` skins,
       hot-swappable via Alt+S.
     * 10-band RBJ-biquad equalizer at ISO 266 octave centres

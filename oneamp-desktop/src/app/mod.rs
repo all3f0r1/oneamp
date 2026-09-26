@@ -40,7 +40,8 @@ use crate::wsz_ui::main_window::VisualizerMode;
 use oneamp_core::{Playlist, RecentFiles};
 
 const AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "flac", "ogg", "oga", "wav", "aac", "m4a", "m4b", "mp4", "alac",
+    "mp3", "flac", "ogg", "oga", "wav", "aac", "m4a", "m4b", "mp4", "alac", "aif", "aiff", "caf",
+    "mka",
 ];
 
 /// Debounce window for `config.save()` — when the user keeps wiggling the

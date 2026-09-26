@@ -15,15 +15,15 @@ license = "MIT OR Apache-2.0"
 [workspace.dependencies]
 # Audio decoding. `aac` enables the AAC LC decoder; `isomp4` brings the
 # MP4 demuxer so .m4a/.m4b/.mp4/AAC-in-MP4 (and Apple's iTunes lineup)
-# loads. `alac` rounds out Apple Lossless. `ogg` was implicit before
-# (default feature) — listing it explicitly so the feature set is
-# auditable. AAC is royalty-free since 2017, so shipping the codec in
-# the binary is fine.
+# loads. `alac` rounds out Apple Lossless. `aiff`, `caf` and `mkv` add
+# the containers symphonia 0.6 gained (AIFF, Core Audio Format,
+# Matroska/.mka). `id3v1`/`id3v2`/`ape` are tag readers, `opt-simd` the
+# SIMD DSP paths. AAC is royalty-free since 2017, so shipping the codec
+# in the binary is fine.
 #
-# `adts` (raw .aac files / shoutcast AAC streams) isn't a feature of
-# symphonia 0.5; for now those streams degrade to the MP4-in-MP3
-# fallback Symphonia chooses by content sniffing.
-symphonia = { version = "0.5", features = [
+# Raw ADTS (.aac files / shoutcast AAC streams) still has no reader in
+# symphonia 0.6; those streams go through content sniffing.
+symphonia = { version = "0.6", features = [
     "mp3",
     "flac",
     "vorbis",
@@ -33,10 +33,25 @@ symphonia = { version = "0.5", features = [
     "aac",
     "isomp4",
     "alac",
+    "aiff",
+    "caf",
+    "mkv",
+    "ape",
+    "id3v1",
+    "id3v2",
+    "opt-simd",
 ] }
 
-# Audio playback
-rodio = "0.21"
+# Audio output. cpal directly (no rodio): we own the ring, the gain
+# chain and the dither, so rodio only added a mixer that silently
+# resampled everything to the device's default rate with linear
+# interpolation. Opening cpal ourselves lets the stream run at the
+# track's native rate.
+cpal = "0.18"
+
+# Band-limited (sinc) resampling, used only when the device refuses the
+# track's native sample rate.
+rubato = "5"
 
 # Error handling
 anyhow = "1.0"
@@ -52,7 +67,7 @@ image = "0.25"
 # covers ID3v1/v2, Vorbis Comments, MP4 atoms, RIFF (WAV) and APE in
 # pure Rust — same surface as the playback codecs, so the tag editor
 # doesn't introduce a divergent format list.
-lofty = "0.24"
+lofty = "0.25"
 
 # HTTP client for internet-radio / podcast streaming. Pure-Rust TLS
 # (rustls + webpki-roots) keeps the binary free of system OpenSSL on
@@ -62,7 +77,7 @@ ureq = "3"
 # FFT for spectrum visualization
 rustfft = "6"
 
-# Lock-free SPSC ring for the rodio output hot path (cpal callback never
+# Lock-free SPSC ring for the audio output hot path (cpal callback never
 # blocks on a mutex). Producer = audio engine thread, consumer = cpal
 # real-time callback.
 ringbuf = "0.5"

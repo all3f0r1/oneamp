@@ -5,10 +5,10 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 
 pub mod audio_capture;
 pub mod audio_thread_symphonia;
@@ -16,26 +16,27 @@ pub mod eqf;
 pub mod equalizer;
 pub mod equalizer_presets;
 pub mod http_stream;
+#[cfg(feature = "audio")]
+pub mod output;
 pub mod playlist;
 pub mod recent_files;
-#[cfg(feature = "audio")]
-pub mod rodio_output;
 pub mod symphonia_player;
 pub mod tag_editor;
 pub mod wsz;
 
 pub use audio_capture::AudioCaptureBuffer;
-/// Highest master volume: 1.5 = 150 % (+3.5 dB). Above 1.0 loud masters
-/// can clip.
+/// Highest master volume: 1.5 = 150 % (+3.5 dB). The part above 1.0 is
+/// applied ahead of the engine's limiter, so loud masters are limited
+/// rather than clipped.
 pub const MAX_VOLUME: f32 = 1.5;
 
 pub use equalizer::{EQ_MAX_DB, Equalizer};
 #[cfg(feature = "serialization")]
 pub use equalizer_presets::{BuiltinPresets, EQ_FREQUENCIES, EqualizerPreset, PresetManager};
+#[cfg(feature = "audio")]
+pub use output::list_output_devices;
 pub use playlist::{Playlist, PlaylistEntry, SortOrder};
 pub use recent_files::{RecentFile, RecentFiles};
-#[cfg(feature = "audio")]
-pub use rodio_output::list_output_devices;
 
 /// Repeat mode for playlist playback
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,7 +108,7 @@ pub enum AudioCommand {
     PlayUrl(String),
     /// Pre-load the next track for gapless transition. The audio thread
     /// decodes header + first packet ahead of time, and on end-of-stream
-    /// swaps it into the running rodio stream without rebuilding the
+    /// swaps it into the running output stream without rebuilding the
     /// device — provided sample_rate and channels match the current
     /// output. Format mismatch falls back to the standard `RequestNext`
     /// path. App side should send this once when the current track is
@@ -192,7 +193,7 @@ pub enum AudioCommand {
     /// on. `None` means "use the host default" (typical case — system
     /// PulseAudio / PipeWire sink). The audio thread applies this on
     /// the next `Play` / gapless preload — switching mid-track would
-    /// require tearing down the live `rodio::Sink`, which is out of
+    /// require tearing down the live cpal stream, which is out of
     /// scope for v1. Names come from `oneamp_core::list_output_devices`.
     SetOutputDevice(Option<String>),
     /// Shutdown the audio thread
@@ -457,30 +458,28 @@ impl TrackInfo {
             hint.with_extension(ext.to_str().unwrap_or(""));
         }
 
-        let format_opts = FormatOptions::default();
-        let metadata_opts = MetadataOptions::default();
-
-        let mut probed = symphonia::default::get_probe()
-            .format(&hint, mss, &format_opts, &metadata_opts)
+        let mut format = symphonia::default::get_probe()
+            .probe(
+                &hint,
+                mss,
+                FormatOptions::default(),
+                MetadataOptions::default(),
+            )
             .context("Failed to probe audio file")?;
 
+        // The probe folds leading (ID3v2) and trailing (ID3v1, APE) tags
+        // into the reader's metadata log ahead of container metadata, so
+        // walking the revisions oldest-first keeps ID3v2 as the source of
+        // truth on duplicates.
         let mut tags = TagAccumulator::default();
-
-        // ID3v2 lives in front of the MPEG frames, so the probe consumes it
-        // before the demuxer sees anything — those tags end up here and not
-        // in `format.metadata()`. Without this branch, every MP3 with only
-        // ID3v2 tags would silently fall back to a filename-derived title.
-        if let Some(rev) = probed.metadata.get().as_ref().and_then(|m| m.current()) {
-            tags.consume(rev);
-        }
-
-        let mut format = probed.format;
-
-        // Container-level / streaming metadata (Vorbis comments, ID3v1 tail,
-        // ICY headers, …). Probe-level wins on duplicates: ID3v2 is the
-        // source of truth when both are present.
-        if let Some(metadata_rev) = format.metadata().current() {
-            tags.consume(metadata_rev);
+        {
+            let mut metadata = format.metadata();
+            while let Some(rev) = metadata.pop() {
+                tags.consume(&rev);
+            }
+            if let Some(rev) = metadata.current() {
+                tags.consume(rev);
+            }
         }
 
         let mut sample_rate = None;
@@ -488,18 +487,14 @@ impl TrackInfo {
         let mut duration_secs = None;
         let mut codec = None;
 
-        // Get track information
-        if let Some(track) = format.default_track() {
-            let codec_params = &track.codec_params;
-
-            sample_rate = codec_params.sample_rate;
-            channels = codec_params.channels.map(|c| c.count() as u8);
-
-            // Extract codec name from CodecType
-            let codec_type = &codec_params.codec;
-            codec = Some(format!("{:?}", codec_type).to_uppercase());
-
-            if let (Some(n_frames), Some(sr)) = (codec_params.n_frames, codec_params.sample_rate) {
+        if let Some(track) = format.default_track(TrackType::Audio) {
+            let params = track.codec_params.as_ref().and_then(|p| p.audio());
+            if let Some(params) = params {
+                sample_rate = params.sample_rate;
+                channels = params.channels.as_ref().map(|c| c.count() as u8);
+                codec = Some(codec_label(params.codec));
+            }
+            if let (Some(n_frames), Some(sr)) = (track.num_frames, sample_rate) {
                 duration_secs = Some(n_frames as f32 / sr as f32);
             }
         }
@@ -553,34 +548,41 @@ struct TagAccumulator {
 
 impl TagAccumulator {
     fn consume(&mut self, rev: &symphonia::core::meta::MetadataRevision) {
-        use symphonia::core::meta::StandardTagKey;
-        for tag in rev.tags() {
-            match tag.std_key {
-                Some(StandardTagKey::TrackTitle) if self.title.is_none() => {
-                    self.title = Some(tag.value.to_string());
+        use symphonia::core::meta::StandardTag;
+        fn set(slot: &mut Option<String>, v: &str) {
+            if slot.is_none() {
+                *slot = Some(v.to_string());
+            }
+        }
+        for tag in &rev.media.tags {
+            match &tag.std {
+                Some(StandardTag::TrackTitle(v)) => set(&mut self.title, v),
+                Some(StandardTag::Artist(v)) => set(&mut self.artist, v),
+                Some(StandardTag::Album(v)) => set(&mut self.album, v),
+                Some(StandardTag::Genre(v)) => set(&mut self.genre, v),
+                Some(StandardTag::TrackNumber(n)) if self.tracknumber.is_none() => {
+                    self.tracknumber = u32::try_from(*n).ok();
                 }
-                Some(StandardTagKey::Artist) if self.artist.is_none() => {
-                    self.artist = Some(tag.value.to_string());
+                Some(
+                    StandardTag::RecordingDate(v)
+                    | StandardTag::ReleaseDate(v)
+                    | StandardTag::OriginalRecordingDate(v)
+                    | StandardTag::OriginalReleaseDate(v),
+                ) if self.year.is_none() => {
+                    self.year = parse_year(v);
                 }
-                Some(StandardTagKey::Album) if self.album.is_none() => {
-                    self.album = Some(tag.value.to_string());
+                Some(
+                    StandardTag::RecordingYear(y)
+                    | StandardTag::ReleaseYear(y)
+                    | StandardTag::OriginalReleaseYear(y),
+                ) if self.year.is_none() => {
+                    self.year = Some(u32::from(*y));
                 }
-                Some(StandardTagKey::TrackNumber) if self.tracknumber.is_none() => {
-                    self.tracknumber = parse_tracknumber(&tag.value.to_string());
+                Some(StandardTag::ReplayGainTrackGain(v)) if self.rg_track.is_none() => {
+                    self.rg_track = parse_replaygain_db(v);
                 }
-                Some(StandardTagKey::Date) | Some(StandardTagKey::OriginalDate)
-                    if self.year.is_none() =>
-                {
-                    self.year = parse_year(&tag.value.to_string());
-                }
-                Some(StandardTagKey::Genre) if self.genre.is_none() => {
-                    self.genre = Some(tag.value.to_string());
-                }
-                Some(StandardTagKey::ReplayGainTrackGain) if self.rg_track.is_none() => {
-                    self.rg_track = parse_replaygain_db(&tag.value.to_string());
-                }
-                Some(StandardTagKey::ReplayGainAlbumGain) if self.rg_album.is_none() => {
-                    self.rg_album = parse_replaygain_db(&tag.value.to_string());
+                Some(StandardTag::ReplayGainAlbumGain(v)) if self.rg_album.is_none() => {
+                    self.rg_album = parse_replaygain_db(v);
                 }
                 _ => {}
             }
@@ -588,16 +590,12 @@ impl TagAccumulator {
     }
 }
 
-/// Many taggers emit track numbers as `"3/12"` (track 3 of 12) or
-/// `" 03 "` with padding. Take the first run of digits and parse that;
-/// anything else is treated as unset rather than guessing zero.
-fn parse_tracknumber(raw: &str) -> Option<u32> {
-    let digits: String = raw
-        .chars()
-        .skip_while(|c| !c.is_ascii_digit())
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    digits.parse().ok()
+/// Short uppercase codec label for the UI readout ("FLAC", "MP3", …).
+fn codec_label(codec: symphonia::core::codecs::audio::AudioCodecId) -> String {
+    symphonia::default::get_codecs()
+        .get_audio_decoder(codec)
+        .map(|d| d.codec.info.short_name.to_uppercase())
+        .unwrap_or_else(|| codec.to_string().to_uppercase())
 }
 
 /// Pull the first 4-digit year out of a date string. Handles `"1994"`,

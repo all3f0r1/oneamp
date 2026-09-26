@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use crate::equalizer::BiquadFilter;
 #[cfg(feature = "audio")]
-use crate::rodio_output::RodioOutput;
+use crate::output::AudioOutput;
 use crate::symphonia_player::SymphoniaPlayer;
 use crate::{
     AudioCaptureBuffer, AudioCommand, AudioEvent, Equalizer, MeterSnapshot, RepeatMode, TrackInfo,
@@ -243,7 +243,7 @@ struct AudioEngineState {
     /// Off by default; mirrors Winamp's mono toggle.
     mono_enabled: bool,
     /// cpal output device name to open on the next track load. `None`
-    /// resolves to the host's default device. The current `RodioOutput`
+    /// resolves to the host's default device. The current `AudioOutput`
     /// is never torn down to honour a switch — applying it on next load
     /// avoids a gap in live audio. Names map to what
     /// `oneamp_core::list_output_devices` returns.
@@ -279,6 +279,26 @@ impl Default for AudioEngineState {
 }
 
 impl AudioEngineState {
+    /// Part of the volume above unity. Applied in the engine, ahead of
+    /// the limiter, so >100 % is limited instead of clipped.
+    fn boost(&self) -> f32 {
+        if self.muted {
+            1.0
+        } else {
+            self.volume.max(1.0)
+        }
+    }
+
+    /// Attenuation part, applied in the output callback so volume moves
+    /// act immediately instead of after the ~0.5 s ring.
+    fn device_volume(&self) -> f32 {
+        if self.muted {
+            0.0
+        } else {
+            self.volume.min(1.0)
+        }
+    }
+
     /// Resolve the effective ReplayGain (dB) for a track given the
     /// current enable flag + mode. Returns 0.0 when RG is disabled —
     /// summing zero leaves the user's preamp untouched. Centralizes the
@@ -315,71 +335,6 @@ fn apply_mono_downmix(samples: &mut [f32], channels: u16) {
     // A malformed odd-length stereo buffer leaves one trailing sample;
     // a lone sample is already "mono", so leaving it untouched is the
     // correct identity — it stays in the stream.
-}
-
-/// Tiny lock-free PRNG for TPDF dither. xorshift32 — fast, no
-/// allocation, no system entropy. Seeded from a fixed constant so the
-/// dither sequence is fully reproducible (important for tests and for
-/// not surprising anyone debugging output); the audio thread owns one
-/// instance for the life of the stream.
-struct DitherRng {
-    state: u32,
-}
-
-impl DitherRng {
-    /// Fixed non-zero seed. xorshift32 must never start at 0 (it would
-    /// stay 0 forever); this constant is an arbitrary odd value.
-    const SEED: u32 = 0x9E37_79B9;
-
-    fn new() -> Self {
-        Self { state: Self::SEED }
-    }
-
-    /// Advance and return the next 32-bit state.
-    #[inline]
-    fn next_u32(&mut self) -> u32 {
-        let mut x = self.state;
-        x ^= x << 13;
-        x ^= x >> 17;
-        x ^= x << 5;
-        self.state = x;
-        x
-    }
-
-    /// Uniform float in [-0.5, +0.5). One xorshift step mapped to the
-    /// unit interval and recentered.
-    #[inline]
-    fn next_uniform(&mut self) -> f32 {
-        // Scale to [0, 1) using 2^-32, then shift to [-0.5, 0.5).
-        (self.next_u32() as f32) * (1.0 / 4_294_967_296.0) - 0.5
-    }
-}
-
-/// One LSB at 16-bit depth, in the [-1, 1] f32 domain. Dither is scaled
-/// to this so it matches the quantization step the cpal/rodio backend
-/// applies when it converts our f32 output to the device's native
-/// 16-bit format.
-const I16_LSB: f32 = 1.0 / 32768.0;
-
-/// Add TPDF (triangular PDF) dither to interleaved f32 samples ahead of
-/// the device's f32→i16 quantization. TPDF = the sum of two independent
-/// uniform [-0.5, +0.5] LSB values; this decorrelates the quantization
-/// error from the signal (killing the harmonic distortion plain
-/// truncation produces on quiet/fading passages) at the cost of a
-/// constant, inaudible noise floor near -93 dBFS.
-///
-/// Always-on: it's the standard for any f32→i16 conversion and the
-/// added noise is below the audible threshold for 16-bit playback. The
-/// dither is added per *sample* (not per frame) so left and right get
-/// independent noise — correlated dither across channels would behave
-/// like a mono noise source.
-fn apply_dither(samples: &mut [f32], rng: &mut DitherRng) {
-    for s in samples.iter_mut() {
-        // Two independent uniforms summed → triangular distribution over
-        // [-1, +1] LSB. Scale to the 16-bit LSB in the f32 domain.
-        let tpdf = (rng.next_uniform() + rng.next_uniform()) * I16_LSB;
-        *s += tpdf;
-    }
 }
 
 /// Multiply every sample by the linear gain matching `preamp_db`. No-op
@@ -518,6 +473,8 @@ struct LoudnessFilter {
     comp_db: f32,
     low_shelf: BiquadFilter,
     high_shelf: BiquadFilter,
+    /// Set while skipped; see `process_in_place`.
+    bypassed: bool,
 }
 
 impl LoudnessFilter {
@@ -537,6 +494,7 @@ impl LoudnessFilter {
             comp_db: 0.0,
             low_shelf: BiquadFilter::new(),
             high_shelf: BiquadFilter::new(),
+            bypassed: true,
         };
         // Snap to flat pass-through at the right sample rate so any
         // future ramp starts from a sane reference.
@@ -593,6 +551,12 @@ impl LoudnessFilter {
             .set_high_shelf_snap(sample_rate, Self::HIGH_FREQ_HZ, self.comp_db);
     }
 
+    /// No compensation and no ramp in flight. 0 dB shelves are unity in
+    /// theory but not bit-exact in float, so they are skipped entirely.
+    fn is_transparent(&self) -> bool {
+        self.comp_db.abs() < 1e-3 && !self.low_shelf.ramp_active() && !self.high_shelf.ramp_active()
+    }
+
     /// Apply the low- and high-shelf in series to interleaved stereo /
     /// mono samples. Short-circuits when the filter has effectively
     /// nothing to do: disabled, target at pass-through, AND the ramp
@@ -601,12 +565,15 @@ impl LoudnessFilter {
     /// filter is still ramping from a previous compensation toward
     /// zero.
     fn process_in_place(&mut self, samples: &mut [f32], channels: u16) {
-        if !self.enabled
-            && self.comp_db.abs() < 1e-3
-            && self.low_shelf.target_is_unity()
-            && !self.low_shelf.ramp_active()
-        {
+        if self.is_transparent() {
+            self.bypassed = true;
             return;
+        }
+        if self.bypassed {
+            // Start from clean history, not the state left seconds ago.
+            self.low_shelf.reset();
+            self.high_shelf.reset();
+            self.bypassed = false;
         }
         let ch = channels.max(1) as usize;
         if ch == 2 {
@@ -636,139 +603,210 @@ impl LoudnessFilter {
     }
 }
 
-/// Lookahead-free brickwall peak limiter, sample-rate-aware. Sits at
-/// the end of the engine's per-sample chain so it sees the worst-case
-/// signal regardless of the user's volume slider (which is downstream
-/// in the rodio Sink). Catches a +12 dB EQ band on top of a -3 dBFS
-/// master without ever sending clipped samples to cpal.
+/// Lookahead brickwall limiter with a 0 dBFS ceiling.
 ///
-/// Design:
-/// - Per-frame peak detection across all channels (link L/R so stereo
-///   image stays intact).
-/// - When the post-gain peak would exceed [`PeakLimiter::threshold`],
-///   the gain is **snapped** (zero-attack) to exactly `threshold / peak`
-///   so this frame's output equals the ceiling — no overshoot, no
-///   single-sample slip-through.
-/// - Otherwise the gain is released back toward unity via a one-pole
-///   filter with the configured time constant (~100 ms).
+/// Transparent (bit-exact, only delayed by the lookahead) for any
+/// signal that stays within full scale — i.e. every untouched PCM
+/// source. It only engages when the DSP chain (EQ/preamp/ReplayGain
+/// boost, >100 % volume, crossfade sum) or a lossy decoder's
+/// inter-sample overs push a sample past ±1.0.
 ///
-/// Replaces v1's `rodio::source::Limit` wrapper which sat *after* the
-/// sink volume control, so a loud user volume would still send a
-/// clipped signal toward the limiter — useless protection. This
-/// limiter is pre-buffer, so it only sees the engine's true output.
+/// Gain computer: per-frame required gain `min(1, ceiling / peak)`,
+/// sliding minimum over the lookahead window, one-pole release, then a
+/// moving average over the same window. The min-then-average pair turns
+/// every gain drop into a linear ramp that *finishes* by the time the
+/// peak leaves the delay line, so there is no overshoot and no
+/// sample-level gain step (which is what the old zero-attack design
+/// produced — audible as distortion).
 struct PeakLimiter {
     sample_rate: f32,
-    /// Linear amplitude ceiling. -1 dBFS by default — leaves ~1 dB of
-    /// inter-sample peak headroom for the downstream resampling stages.
-    threshold: f32,
-    /// One-pole coefficient for release. `out = 1 + (prev - 1) * release`,
-    /// which converges toward 1.0 with time constant `RELEASE_SECS`.
+    channels: usize,
+    /// Window length in frames.
+    window: usize,
     release: f32,
-    /// Current gain multiplier in [0, 1].
-    gain: f32,
+    /// Audio delay line, `window - 1` frames (interleaved).
+    delay: std::collections::VecDeque<f32>,
+    /// Monotonic deque of (frame index, required gain) for the sliding min.
+    mins: std::collections::VecDeque<(u64, f32)>,
+    /// Released gain history for the moving average.
+    avg: std::collections::VecDeque<f32>,
+    avg_sum: f64,
+    /// `1 - released gain`. Kept as the deficit because a gain stored
+    /// near 1.0 in f32 stalls: the release step drops below its ulp.
+    deficit: f32,
+    frame: u64,
+    /// Whether the last `process` call attenuated anything.
+    engaged: bool,
 }
 
 impl PeakLimiter {
-    const THRESHOLD_DB: f32 = -1.0;
+    const CEILING: f32 = 1.0;
+    const LOOKAHEAD_SECS: f32 = 0.002;
     const RELEASE_SECS: f32 = 0.100;
 
     fn new(sample_rate: f32) -> Self {
-        Self {
+        let mut l = Self {
             sample_rate,
-            threshold: 10.0_f32.powf(Self::THRESHOLD_DB / 20.0),
+            channels: 2,
+            window: ((sample_rate * Self::LOOKAHEAD_SECS).round() as usize).max(2),
             release: (-1.0 / (Self::RELEASE_SECS * sample_rate)).exp(),
-            gain: 1.0,
-        }
+            delay: Default::default(),
+            mins: Default::default(),
+            avg: Default::default(),
+            avg_sum: 0.0,
+            deficit: 0.0,
+            frame: 0,
+            engaged: false,
+        };
+        l.reset(2);
+        l
     }
 
-    /// Recompute the release coefficient when the sample rate changes.
-    /// Resets the gain too — a track boundary is a clean break, the
-    /// previous track's envelope shouldn't bleed into the next.
+    fn reset(&mut self, channels: usize) {
+        self.channels = channels.max(1);
+        self.delay.clear();
+        self.delay.resize((self.window - 1) * self.channels, 0.0);
+        self.mins.clear();
+        self.avg.clear();
+        self.avg.resize(self.window, 1.0);
+        self.avg_sum = self.window as f64;
+        self.deficit = 0.0;
+        self.engaged = false;
+    }
+
+    /// Retune for a new track: a clean break, the previous envelope and
+    /// delayed audio don't carry over.
     fn set_sample_rate(&mut self, sample_rate: f32) {
         if (self.sample_rate - sample_rate).abs() > 0.1 {
             *self = Self::new(sample_rate);
         } else {
-            self.gain = 1.0;
+            self.reset(self.channels);
         }
     }
 
-    /// Apply the limiter in place. Frames are `channels`-strided.
-    ///
-    /// Policy:
-    /// - **Over threshold**: hold the gain at `min(current_gain, threshold/peak)`.
-    ///   Never release while a peak is still active — that would let
-    ///   the next-frame release tick overshoot the ceiling.
-    /// - **Under threshold**: one-pole release toward unity.
     fn process(&mut self, samples: &mut [f32], channels: u16) {
         let ch = channels.max(1) as usize;
-        for frame in samples.chunks_mut(ch) {
+        if ch != self.channels {
+            self.reset(ch);
+        }
+        self.engaged = false;
+        for frame in samples.chunks_exact_mut(ch) {
             let peak = frame.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
-            if peak > self.threshold {
-                let needed = self.threshold / peak;
-                self.gain = self.gain.min(needed);
+            let need = if peak > Self::CEILING {
+                Self::CEILING / peak
             } else {
-                // Peak below the ceiling: release toward unity. One-pole
-                // with time constant RELEASE_SECS.
-                self.gain = 1.0 + (self.gain - 1.0) * self.release;
+                1.0
+            };
+
+            // Sliding minimum over the last `window` frames.
+            while self.mins.back().is_some_and(|&(_, g)| g >= need) {
+                self.mins.pop_back();
             }
-            for s in frame {
-                *s *= self.gain;
+            self.mins.push_back((self.frame, need));
+            while self
+                .mins
+                .front()
+                .is_some_and(|&(i, _)| i + self.window as u64 <= self.frame)
+            {
+                self.mins.pop_front();
             }
+            let wmin = self.mins.front().map_or(1.0, |&(_, g)| g);
+
+            // Release toward unity, never above the window minimum. Snap
+            // to exactly 1.0 so the idle path stays bit-exact.
+            let mut deficit = self.deficit * self.release;
+            if deficit < 1e-6 {
+                deficit = 0.0;
+            }
+            self.deficit = deficit.max(1.0 - wmin);
+            let held = 1.0 - self.deficit;
+
+            // Moving average → linear attack ramp.
+            self.avg_sum += held as f64 - self.avg.pop_front().unwrap_or(1.0) as f64;
+            self.avg.push_back(held);
+            let gain = if self.avg_sum >= self.window as f64 {
+                1.0
+            } else {
+                (self.avg_sum / self.window as f64) as f32
+            };
+            self.engaged |= gain < 1.0;
+
+            for s in frame.iter_mut() {
+                self.delay.push_back(*s);
+                let out = self.delay.pop_front().unwrap_or(0.0);
+                *s = if gain < 1.0 { out * gain } else { out };
+            }
+            self.frame += 1;
         }
     }
 }
 
-/// Apply constant-power stereo balance to interleaved samples
-/// (channels==2 only).
-///
-/// Mapping: `theta = (balance + 1) * π/4`, so `balance = -1 → theta = 0`
-/// (full left), `balance = 0 → theta = π/4` (center), `balance = +1 →
-/// theta = π/2` (full right). Then `L = cos(theta)`, `R = sin(theta)`.
-///
-/// Sum-of-squares stays 1.0 across the entire range — perceived
-/// loudness is constant as the user pans. v1 just cut one side and
-/// left the other at 1.0, which **boosted** the center by 3 dB
-/// relative to the panned extremes — most balance UIs (DAWs, console
-/// mixers, broadcast specs) use constant-power for this exact reason.
+/// Stereo balance, Winamp-style: unity at center (bit-exact no-op),
+/// panning attenuates only the opposite side linearly down to silence.
+/// The v1.2 constant-power law kept both sides at −3 dB even at center.
 fn apply_balance(samples: &mut [f32], channels: u16, balance: f32) {
-    if channels != 2 {
+    if channels != 2 || balance == 0.0 {
         return;
     }
-    let theta = (balance.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
-    let (left_gain, right_gain) = (theta.cos(), theta.sin());
-    // Skip the multiply when both gains are essentially 1.0 — never
-    // happens at the new center (gains ≈ 0.707), so the only "no-op"
-    // path is the channel-count guard above.
+    let b = balance.clamp(-1.0, 1.0);
+    let (left_gain, right_gain) = if b > 0.0 {
+        (1.0 - b, 1.0)
+    } else {
+        (1.0, 1.0 + b)
+    };
     let (frames, rest) = samples.as_chunks_mut::<2>();
     for chunk in frames {
         chunk[0] *= left_gain;
         chunk[1] *= right_gain;
     }
-    // A malformed/odd-length stereo buffer leaves one trailing sample.
-    // We can't know whether it's an L or R orphan, so treat it as a
-    // centered (mono) sample: apply the geometric mean of the two gains
-    // so its loudness tracks the pan law without favouring a side. This
-    // keeps the sample in the stream instead of silently dropping it.
+    // Odd-length stereo buffer: treat the orphan as centered.
     if let [last] = rest {
         *last *= (left_gain * right_gain).sqrt();
     }
 }
 
+/// Point every rate-dependent stage at a new track's sample rate and
+/// drop the previous track's filter state.
+fn retune_chain(
+    rate: f32,
+    equalizer: &Mutex<Equalizer>,
+    loudness: &mut LoudnessFilter,
+    limiter: &mut PeakLimiter,
+    meter: &mut PeakRmsMeter,
+    volume: f32,
+) {
+    if let Ok(mut eq) = equalizer.lock() {
+        eq.set_sample_rate(rate);
+        eq.reset_state();
+    }
+    limiter.set_sample_rate(rate);
+    loudness.set_sample_rate(rate);
+    loudness.set_for_volume(volume);
+    meter.set_sample_rate(rate);
+}
+
 /// Audio playback state
 struct PlaybackState {
     player: SymphoniaPlayer,
-    output: RodioOutput,
+    output: AudioOutput,
     is_paused: bool,
+    /// Decoded audio to play before asking the decoder for more — the
+    /// incoming track's leftover after a crossfade swap.
+    carry: Vec<f32>,
 }
 
 /// A track preloaded by `AudioCommand::QueueNext`. Held alongside the active
-/// playback so end-of-stream can swap it in without rebuilding the rodio
+/// playback so end-of-stream can swap it in without rebuilding the output
 /// device — the no-gap path. Only swapped if its sample rate and channel
 /// count match the live output; otherwise we drop it and fall back to the
 /// standard `RequestNext` rebuild.
 struct PendingNext {
     player: SymphoniaPlayer,
     track: TrackInfo,
+    /// Incoming audio decoded during a crossfade but not mixed yet.
+    /// Packet sizes differ between tracks (1152-frame MP3 vs 4096-frame
+    /// FLAC), so this FIFO keeps the surplus instead of dropping it.
+    carry: Vec<f32>,
     /// Path used as a dedupe key — the app may resend `QueueNext` every
     /// frame as the current track approaches its end.
     path: PathBuf,
@@ -825,12 +863,6 @@ pub fn audio_thread_main_symphonia(
     // signal so the bars match what the device receives.
     let mut meter = PeakRmsMeter::new(44100.0);
 
-    // TPDF dither generator — applied to every output buffer just
-    // before it's handed to the device, ahead of the backend's f32→i16
-    // quantization. One instance for the life of the thread so the
-    // noise sequence stays continuous across packets.
-    let mut dither_rng = DitherRng::new();
-
     // Capture buffer: one full FFT window of stereo PCM (interleaved
     // L/R, so `CAPTURE_FRAMES * 2` samples). Doubles as the source for
     // the oscilloscope, which consumes `WAVEFORM_FRAMES = FFT_SIZE / 2`
@@ -879,18 +911,12 @@ pub fn audio_thread_main_symphonia(
                         // currently-playing track's filter state. We only
                         // adjust the rate at swap time, and then only if
                         // it actually differs from the live one.
-                        match (
-                            TrackInfo::from_file(&path),
-                            SymphoniaPlayer::load_for_preload(
-                                &path,
-                                equalizer.clone(),
-                                capture_buffer.clone(),
-                            ),
-                        ) {
+                        match (TrackInfo::from_file(&path), SymphoniaPlayer::load(&path)) {
                             (Ok(track), Ok(player)) => {
                                 next_pending = Some(PendingNext {
                                     player,
                                     track,
+                                    carry: Vec::new(),
                                     path,
                                 });
                             }
@@ -931,21 +957,15 @@ pub fn audio_thread_main_symphonia(
                             // SymphoniaPlayer + RodioOutput pair is the
                             // same plumbing the file path uses; the
                             // only branch is the stream's origin.
-                            match SymphoniaPlayer::load_from_source(
-                                Box::new(stream),
-                                ext_hint,
-                                equalizer.clone(),
-                                capture_buffer.clone(),
-                            ) {
+                            match SymphoniaPlayer::load_from_source(Box::new(stream), ext_hint) {
                                 Ok(player) => {
                                     let sr = player.sample_rate();
                                     let ch = player.channels();
-                                    let output_res =
-                                        crate::rodio_output::RodioOutput::new_with_device(
-                                            sr,
-                                            ch,
-                                            engine_state.output_device_name.as_deref(),
-                                        );
+                                    let output_res = AudioOutput::new_with_device(
+                                        sr,
+                                        ch,
+                                        engine_state.output_device_name.as_deref(),
+                                    );
                                     match output_res {
                                         Ok(output) => {
                                             // Build a stand-in `TrackInfo`
@@ -973,19 +993,20 @@ pub fn audio_thread_main_symphonia(
                                             let _ =
                                                 event_tx.send(AudioEvent::TrackLoaded(track_info));
 
-                                            if engine_state.muted {
-                                                let _ = output.set_volume(0.0);
-                                            } else {
-                                                let _ = output.set_volume(engine_state.volume);
-                                            }
-                                            limiter.set_sample_rate(output.sample_rate() as f32);
-                                            loudness.set_sample_rate(output.sample_rate() as f32);
-                                            loudness.set_for_volume(engine_state.volume);
-                                            meter.set_sample_rate(output.sample_rate() as f32);
+                                            output.set_volume(engine_state.device_volume());
+                                            retune_chain(
+                                                output.sample_rate() as f32,
+                                                &equalizer,
+                                                &mut loudness,
+                                                &mut limiter,
+                                                &mut meter,
+                                                engine_state.volume,
+                                            );
                                             playback = Some(PlaybackState {
                                                 player,
                                                 output,
                                                 is_paused: false,
+                                                carry: Vec::new(),
                                             });
                                             current_icy = Some(icy_handle);
                                             current_reconnect = Some(reconnect_handle);
@@ -1042,27 +1063,22 @@ pub fn audio_thread_main_symphonia(
                             let _ = event_tx.send(AudioEvent::TrackLoaded(track_info));
 
                             // Load and play the file
-                            match load_and_play(
-                                &path,
-                                equalizer.clone(),
-                                capture_buffer.clone(),
-                                engine_state.output_device_name.as_deref(),
-                            ) {
+                            match load_and_play(&path, engine_state.output_device_name.as_deref()) {
                                 Ok(state) => {
                                     // Apply current volume and mute state
-                                    if engine_state.muted {
-                                        let _ = state.output.set_volume(0.0);
-                                    } else {
-                                        let _ = state.output.set_volume(engine_state.volume);
-                                    }
+                                    state.output.set_volume(engine_state.device_volume());
                                     // Track-rate update so the release
                                     // time constant matches the cpal
                                     // device. Also clears the previous
                                     // track's envelope.
-                                    limiter.set_sample_rate(state.output.sample_rate() as f32);
-                                    loudness.set_sample_rate(state.output.sample_rate() as f32);
-                                    loudness.set_for_volume(engine_state.volume);
-                                    meter.set_sample_rate(state.output.sample_rate() as f32);
+                                    retune_chain(
+                                        state.output.sample_rate() as f32,
+                                        &equalizer,
+                                        &mut loudness,
+                                        &mut limiter,
+                                        &mut meter,
+                                        engine_state.volume,
+                                    );
 
                                     playback = Some(state);
                                     let _ = event_tx.send(AudioEvent::Playing);
@@ -1083,7 +1099,7 @@ pub fn audio_thread_main_symphonia(
                     if let Some(ref mut state) = playback
                         && !state.is_paused
                     {
-                        let _ = state.output.pause();
+                        state.output.pause();
                         state.is_paused = true;
                         let _ = event_tx.send(AudioEvent::Paused);
                     }
@@ -1092,7 +1108,7 @@ pub fn audio_thread_main_symphonia(
                     if let Some(ref mut state) = playback
                         && state.is_paused
                     {
-                        let _ = state.output.play();
+                        state.output.play();
                         state.is_paused = false;
                         let _ = event_tx.send(AudioEvent::Playing);
                     }
@@ -1131,6 +1147,9 @@ pub fn audio_thread_main_symphonia(
                             match state.player.seek(attempt) {
                                 Ok(()) => {
                                     state.output.clear();
+                                    // Same rate: just flushes the
+                                    // lookahead delay line.
+                                    limiter.set_sample_rate(state.player.sample_rate() as f32);
                                     seek_ok = true;
                                     break;
                                 }
@@ -1235,10 +1254,8 @@ pub fn audio_thread_main_symphonia(
                 }
                 AudioCommand::SetVolume(volume) => {
                     engine_state.volume = volume.clamp(0.0, crate::MAX_VOLUME);
-                    if let Some(ref mut state) = playback
-                        && !engine_state.muted
-                    {
-                        let _ = state.output.set_volume(engine_state.volume);
+                    if let Some(ref mut state) = playback {
+                        state.output.set_volume(engine_state.device_volume());
                     }
                     // Refresh the loudness comp curve to track the new
                     // volume. The filter no-ops cheaply when loudness
@@ -1257,11 +1274,7 @@ pub fn audio_thread_main_symphonia(
                 AudioCommand::SetMute(muted) => {
                     engine_state.muted = muted;
                     if let Some(ref mut state) = playback {
-                        if engine_state.muted {
-                            let _ = state.output.set_volume(0.0);
-                        } else {
-                            let _ = state.output.set_volume(engine_state.volume);
-                        }
+                        state.output.set_volume(engine_state.device_volume());
                     }
                     let _ = event_tx.send(AudioEvent::VolumeUpdated(
                         engine_state.volume,
@@ -1381,67 +1394,94 @@ pub fn audio_thread_main_symphonia(
 
             // Check if output needs more data
             if state.output.needs_data() {
-                match state.player.decode_next() {
+                let decoded = if state.carry.is_empty() {
+                    state.player.decode_next()
+                } else {
+                    Ok(Some(std::mem::take(&mut state.carry)))
+                };
+                match decoded {
                     Ok(Some(mut samples)) => {
                         if !samples.is_empty() {
-                            // Mix in the next track's chunk if we're in
-                            // the fade window. Both decoders advance in
-                            // lock-step here; the queued track's first
-                            // packets get consumed during the fade and
-                            // the EOS swap below picks up where the mix
-                            // left off without an audible seam.
+                            let channels = state.player.channels();
+                            // Mix in the next track during the fade
+                            // window. The incoming decoder runs ahead
+                            // into `pending.carry` until it covers this
+                            // chunk; the surplus stays queued and the
+                            // EOS swap plays it first, so no incoming
+                            // sample is lost at either seam.
+                            let mut crossfading = false;
                             if let Some((fade_in, fade_out)) = crossfade_state
                                 && let Some(pending) = next_pending.as_mut()
-                                && let Ok(Some(incoming)) = pending.player.decode_next()
                             {
-                                let len = samples.len().min(incoming.len());
-                                for i in 0..len {
-                                    samples[i] = samples[i] * fade_out + incoming[i] * fade_in;
+                                while pending.carry.len() < samples.len() {
+                                    match pending.player.decode_next() {
+                                        Ok(Some(more)) => pending.carry.extend_from_slice(&more),
+                                        _ => break,
+                                    }
                                 }
+                                let len = samples.len().min(pending.carry.len());
+                                for s in samples.iter_mut() {
+                                    *s *= fade_out;
+                                }
+                                for (s, inc) in samples.iter_mut().zip(pending.carry.drain(..len)) {
+                                    *s += inc * fade_in;
+                                }
+                                crossfading = true;
                             }
-                            // Loudness compensation. Runs after EQ
-                            // (which lives inside the player) and before
-                            // preamp/balance/limiter so the shelves
-                            // shape the EQ'd signal in its normalized
-                            // form. No-ops cheaply when disabled and
-                            // the comp has converged to zero.
-                            loudness.process_in_place(&mut samples, state.player.channels());
+                            // EQ runs here, after the mix, so the two
+                            // crossfading decoders never interleave
+                            // through one set of filter states.
+                            let eq_transparent = match equalizer.lock() {
+                                Ok(mut eq) => {
+                                    match channels {
+                                        1 => eq.process_mono_in_place(&mut samples),
+                                        2 => eq.process_stereo_in_place(&mut samples),
+                                        _ => {} // surround passes through
+                                    }
+                                    eq.is_transparent()
+                                }
+                                Err(_) => true,
+                            };
+                            if let Ok(mut buffer) = capture_buffer.lock() {
+                                buffer.update(&samples, state.player.sample_rate(), channels);
+                            }
+                            // Loudness compensation, after EQ and before
+                            // gain/balance/limiter.
+                            let loudness_transparent = loudness.is_transparent();
+                            loudness.process_in_place(&mut samples, channels);
                             // Mono downmix before gain/balance/limiter so
                             // panning still applies to the mono'd signal
                             // and the meter/limiter see the true output.
                             if engine_state.mono_enabled {
-                                apply_mono_downmix(&mut samples, state.player.channels());
+                                apply_mono_downmix(&mut samples, channels);
                             }
-                            // User preamp + per-track ReplayGain (zero
-                            // when RG is disabled or the file isn't
-                            // tagged). Summed in dB-space so a +6 dB
-                            // preamp on a -3 dB track ends up at +3 dB.
-                            apply_preamp(
-                                &mut samples,
-                                engine_state.preamp_db + engine_state.track_gain_db,
-                            );
-                            apply_balance(
-                                &mut samples,
-                                state.player.channels(),
-                                engine_state.balance,
-                            );
-                            // Brickwall ceiling at -1 dBFS. Applied here
-                            // (pre-buffer) so it sees the engine's true
-                            // worst-case signal; the v1 rodio-side limiter
-                            // sat past the sink volume and was effectively
-                            // useless at high listener volume.
-                            limiter.process(&mut samples, state.player.channels());
-                            // Meter the post-limiter signal — reflects
-                            // what's heading to the device, not what
-                            // the decoder produced.
-                            meter.process(&samples, state.player.channels());
-                            // TPDF dither last, just before the buffer
-                            // leaves the engine. Sits after the limiter so
-                            // the (already-tiny) dither noise isn't itself
-                            // limited, and after metering so the meter
-                            // reads the musical signal rather than noise.
-                            apply_dither(&mut samples, &mut dither_rng);
-                            state.output.write_samples(&samples);
+                            // Preamp + ReplayGain + the >100 % part of
+                            // the volume, summed in dB, all ahead of the
+                            // limiter.
+                            let gain_db = engine_state.preamp_db
+                                + engine_state.track_gain_db
+                                + 20.0 * engine_state.boost().log10();
+                            apply_preamp(&mut samples, gain_db);
+                            apply_balance(&mut samples, channels, engine_state.balance);
+                            // 0 dBFS lookahead limiter: a pure delay
+                            // unless something above pushed past full
+                            // scale.
+                            limiter.process(&mut samples, channels);
+                            meter.process(&samples, channels);
+                            // Bit-perfect when nothing touched the
+                            // samples and the device format holds the
+                            // source depth: the output then skips dither.
+                            let exact = !crossfading
+                                && eq_transparent
+                                && loudness_transparent
+                                && !(engine_state.mono_enabled && channels == 2)
+                                && gain_db.abs() < 1e-3
+                                && (engine_state.balance == 0.0 || channels != 2)
+                                && !limiter.engaged
+                                && state.player.source_bits().is_some_and(|b| {
+                                    state.output.device_bits().is_none_or(|d| b <= d)
+                                });
+                            state.output.write_samples(&samples, exact);
                         }
                     }
                     Ok(None) => {
@@ -1549,23 +1589,19 @@ pub fn audio_thread_main_symphonia(
                     // next is moot — drop it.
                     next_pending = None;
                     if let Some(ref track) = current_track {
-                        match load_and_play(
-                            &track.path,
-                            equalizer.clone(),
-                            capture_buffer.clone(),
-                            engine_state.output_device_name.as_deref(),
-                        ) {
+                        match load_and_play(&track.path, engine_state.output_device_name.as_deref())
+                        {
                             Ok(state) => {
                                 // Apply current volume and mute state
-                                if engine_state.muted {
-                                    let _ = state.output.set_volume(0.0);
-                                } else {
-                                    let _ = state.output.set_volume(engine_state.volume);
-                                }
-                                limiter.set_sample_rate(state.output.sample_rate() as f32);
-                                loudness.set_sample_rate(state.output.sample_rate() as f32);
-                                loudness.set_for_volume(engine_state.volume);
-                                meter.set_sample_rate(state.output.sample_rate() as f32);
+                                state.output.set_volume(engine_state.device_volume());
+                                retune_chain(
+                                    state.output.sample_rate() as f32,
+                                    &equalizer,
+                                    &mut loudness,
+                                    &mut limiter,
+                                    &mut meter,
+                                    engine_state.volume,
+                                );
 
                                 playback = Some(state);
                                 let _ = event_tx.send(AudioEvent::Playing);
@@ -1585,7 +1621,7 @@ pub fn audio_thread_main_symphonia(
                     }
                 }
                 RepeatMode::All | RepeatMode::Off => {
-                    // Try the gapless swap path. The rodio Sink keeps
+                    // Try the gapless swap path. The output keeps
                     // consuming from its existing buffer (~0.5 s queued)
                     // while we replace the decoder, so the device never
                     // starves — no audible gap. Falls back to the
@@ -1610,6 +1646,7 @@ pub fn audio_thread_main_symphonia(
                     match (swap, playback.as_mut()) {
                         (Some(pending), Some(state)) => {
                             state.player = pending.player;
+                            state.carry = pending.carry;
                             // Gapless swap brings in a new track — refresh
                             // the cached ReplayGain so the next sample batch
                             // is normalized against the new file's tag.
@@ -1646,22 +1683,17 @@ pub fn audio_thread_main_symphonia(
 
 /// Load and start playing an audio file. `device_name` selects the cpal
 /// output device; `None` falls back to the host default.
-fn load_and_play(
-    path: &Path,
-    equalizer: Arc<Mutex<Equalizer>>,
-    capture_buffer: Arc<Mutex<AudioCaptureBuffer>>,
-    device_name: Option<&str>,
-) -> Result<PlaybackState> {
-    let player = SymphoniaPlayer::load(path, equalizer, capture_buffer)
-        .context("Failed to load audio file")?;
+fn load_and_play(path: &Path, device_name: Option<&str>) -> Result<PlaybackState> {
+    let player = SymphoniaPlayer::load(path).context("Failed to load audio file")?;
 
-    let output = RodioOutput::new_with_device(player.sample_rate(), player.channels(), device_name)
+    let output = AudioOutput::new_with_device(player.sample_rate(), player.channels(), device_name)
         .context("Failed to create audio output")?;
 
     Ok(PlaybackState {
         player,
         output,
         is_paused: false,
+        carry: Vec::new(),
     })
 }
 
@@ -1902,107 +1934,97 @@ mod tests {
     }
 
     #[test]
-    fn apply_balance_center_is_constant_power() {
-        let mut samples = vec![1.0_f32, 1.0]; // one stereo frame at full
-        apply_balance(&mut samples, 2, 0.0);
-        // L = cos(π/4) ≈ R = sin(π/4) ≈ 0.7071
-        let expected = std::f32::consts::FRAC_1_SQRT_2;
-        assert!((samples[0] - expected).abs() < 1e-5);
-        assert!((samples[1] - expected).abs() < 1e-5);
-        // Sum of squares is the perceived "power" — 1.0 means no
-        // loudness change at the center position.
-        let power = samples[0] * samples[0] + samples[1] * samples[1];
-        assert!((power - 1.0).abs() < 1e-5);
+    fn apply_balance_center_is_bit_exact() {
+        let mut s = vec![0.5_f32, -0.25, 0.123_456_7, -0.987_654_3];
+        let orig = s.clone();
+        apply_balance(&mut s, 2, 0.0);
+        assert_eq!(s, orig);
     }
 
     #[test]
     fn apply_balance_full_left_silences_right_and_keeps_left() {
-        let mut samples = vec![0.8_f32, 0.8];
-        apply_balance(&mut samples, 2, -1.0);
-        assert!((samples[0] - 0.8).abs() < 1e-5);
-        assert!(samples[1].abs() < 1e-5);
+        let mut s = vec![0.5_f32, 0.5];
+        apply_balance(&mut s, 2, -1.0);
+        assert_eq!(s, vec![0.5, 0.0]);
     }
 
     #[test]
     fn apply_balance_full_right_silences_left_and_keeps_right() {
-        let mut samples = vec![0.8_f32, 0.8];
-        apply_balance(&mut samples, 2, 1.0);
-        assert!(samples[0].abs() < 1e-5);
-        assert!((samples[1] - 0.8).abs() < 1e-5);
+        let mut s = vec![0.5_f32, 0.5];
+        apply_balance(&mut s, 2, 1.0);
+        assert_eq!(s, vec![0.0, 0.5]);
     }
 
     #[test]
-    fn apply_balance_constant_power_holds_across_range() {
-        // Sum-of-squares must stay 1.0 for every balance position.
-        for &b in &[-1.0_f32, -0.5, -0.2, 0.0, 0.2, 0.5, 1.0] {
-            let mut s = vec![1.0_f32, 1.0];
-            apply_balance(&mut s, 2, b);
-            let power = s[0] * s[0] + s[1] * s[1];
-            assert!(
-                (power - 1.0).abs() < 1e-5,
-                "constant-power violated at balance {}: power = {}",
-                b,
-                power
-            );
-        }
+    fn apply_balance_only_attenuates_opposite_side() {
+        let mut s = vec![1.0_f32, 1.0];
+        apply_balance(&mut s, 2, 0.25);
+        assert_eq!(s, vec![0.75, 1.0]);
+    }
+
+    /// Run `input` through the limiter and drop the lookahead delay so
+    /// output index n lines up with input index n.
+    fn limit_aligned(lim: &mut PeakLimiter, input: &[f32]) -> Vec<f32> {
+        let delay = (lim.window - 1) * 2;
+        let mut buf = input.to_vec();
+        buf.extend(std::iter::repeat_n(0.0, delay));
+        lim.process(&mut buf, 2);
+        buf[delay..].to_vec()
     }
 
     #[test]
-    fn limiter_clamps_overshoot_to_threshold() {
+    fn limiter_is_bit_exact_within_full_scale() {
         let mut lim = PeakLimiter::new(44100.0);
-        // Frames at 2.0 — way above the -1 dBFS ceiling. Output must
-        // never exceed the threshold magnitude.
-        let mut samples = vec![2.0_f32; 1024];
-        lim.process(&mut samples, 1);
-        let max = samples.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
+        let input = stereo_sine(1000.0, 44100.0, 4096, 0.999);
+        let out = limit_aligned(&mut lim, &input);
+        assert_eq!(out, input);
+        assert!(!lim.engaged);
+    }
+
+    #[test]
+    fn limiter_never_exceeds_ceiling() {
+        let mut lim = PeakLimiter::new(44100.0);
+        // +6 dB over full scale, with a sudden jump the lookahead must
+        // catch before it leaves the delay line.
+        let mut input = stereo_sine(200.0, 44100.0, 2048, 0.3);
+        input.extend(stereo_sine(3000.0, 44100.0, 4096, 2.0));
+        let out = limit_aligned(&mut lim, &input);
+        let max = out.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
+        assert!(max <= PeakLimiter::CEILING + 1e-6, "peak {max}");
+    }
+
+    #[test]
+    fn limiter_gain_moves_without_steps() {
+        // A single over should be approached by a ramp: consecutive
+        // output gains never jump by more than 1/window of the reduction.
+        let mut lim = PeakLimiter::new(44100.0);
+        let mut input = vec![0.5_f32; 2 * 1000];
+        input[2 * 500] = 2.0;
+        input[2 * 500 + 1] = 2.0;
+        let out = limit_aligned(&mut lim, &input);
+        let gains: Vec<f32> = (0..1000)
+            .filter(|&n| n != 500)
+            .map(|n| out[2 * n] / 0.5)
+            .collect();
+        let max_step = gains
+            .windows(2)
+            .fold(0.0_f32, |m, w| m.max((w[1] - w[0]).abs()));
         assert!(
-            max <= lim.threshold + 1e-5,
-            "limiter let {} through (threshold {})",
-            max,
-            lim.threshold
+            max_step <= 0.5 / lim.window as f32 + 1e-4,
+            "step {max_step}"
         );
+        assert!(out[2 * 500] <= 1.0 + 1e-6);
     }
 
     #[test]
-    fn limiter_is_transparent_below_threshold() {
+    fn limiter_releases_back_to_unity() {
         let mut lim = PeakLimiter::new(44100.0);
-        let original = vec![0.5_f32; 1024];
-        let mut samples = original.clone();
-        lim.process(&mut samples, 1);
-        // No limiting needed — gain stays at unity, samples unchanged.
-        for (i, (&out, &orig)) in samples.iter().zip(&original).enumerate() {
-            assert!(
-                (out - orig).abs() < 1e-6,
-                "unexpected change at sample {}: {} vs {}",
-                i,
-                out,
-                orig
-            );
-        }
-    }
-
-    #[test]
-    fn limiter_releases_smoothly_after_attack() {
-        let mut lim = PeakLimiter::new(44100.0);
-        // First frame triggers limiting; subsequent frames are quiet.
-        let mut burst = vec![2.0_f32; 2];
-        lim.process(&mut burst, 2);
-        assert!(lim.gain < 1.0, "limiter should have engaged");
-        let gain_after_attack = lim.gain;
-
-        let mut quiet = vec![0.1_f32; 2 * 1000];
-        lim.process(&mut quiet, 2);
-        // After ~1000 frames at 44.1 kHz (~23 ms ≈ τ/4 to τ/3 of the
-        // 100 ms release time constant), gain should have recovered
-        // meaningfully toward 1.0 but not yet fully — that's the whole
-        // point of a smoothed release.
-        assert!(
-            lim.gain > gain_after_attack,
-            "release should raise gain over time: {} → {}",
-            gain_after_attack,
-            lim.gain
-        );
-        assert!(lim.gain < 1.0, "release should still be in progress");
+        let mut input = stereo_sine(1000.0, 44100.0, 441, 2.0);
+        input.extend(stereo_sine(1000.0, 44100.0, 3 * 44100, 0.5));
+        let out = limit_aligned(&mut lim, &input);
+        let tail = &out[out.len() - 2000..];
+        let src = &input[input.len() - 2000..];
+        assert_eq!(tail, src, "gain should have released to exactly 1.0");
     }
 
     #[test]
@@ -2019,48 +2041,6 @@ mod tests {
         let original = samples.clone();
         apply_mono_downmix(&mut samples, 1);
         assert_eq!(samples, original);
-    }
-
-    #[test]
-    fn dither_is_deterministic_for_fixed_seed() {
-        // Same seed → identical sequence. Reproducibility is the whole
-        // point of seeding the PRNG from a constant.
-        let mut a = DitherRng::new();
-        let mut b = DitherRng::new();
-        let mut sa = vec![0.0_f32; 64];
-        let mut sb = vec![0.0_f32; 64];
-        apply_dither(&mut sa, &mut a);
-        apply_dither(&mut sb, &mut b);
-        assert_eq!(sa, sb, "dither must be reproducible for a fixed seed");
-    }
-
-    #[test]
-    fn dither_magnitude_is_bounded_to_two_lsb() {
-        // TPDF over [-1, +1] LSB summed from two uniforms: the absolute
-        // value can never exceed 2 LSB. Verifies we're not injecting an
-        // audible amount of noise.
-        let mut rng = DitherRng::new();
-        let mut s = vec![0.0_f32; 4096];
-        apply_dither(&mut s, &mut rng);
-        let max = s.iter().fold(0.0_f32, |m, &v| m.max(v.abs()));
-        assert!(
-            max <= 2.0 * I16_LSB + 1e-9,
-            "dither exceeded ±2 LSB: {} (limit {})",
-            max,
-            2.0 * I16_LSB
-        );
-        // And it should actually be doing something (non-zero) on a
-        // silent input.
-        assert!(s.iter().any(|&v| v != 0.0), "dither produced all zeros");
-    }
-
-    #[test]
-    fn dither_rng_uniform_stays_in_range() {
-        let mut rng = DitherRng::new();
-        for _ in 0..100_000 {
-            let u = rng.next_uniform();
-            assert!((-0.5..0.5).contains(&u), "uniform out of range: {}", u);
-        }
     }
 
     #[test]

@@ -481,7 +481,7 @@ impl OneAmpApp {
 
     /// Send `AudioCommand::QueueNext` for the upcoming playlist track when
     /// the current one is in its last ~2 seconds. The audio thread uses
-    /// the preloaded decoder to swap into the running rodio stream
+    /// the preloaded decoder to swap into the running output stream
     /// without rebuilding the device — that's the no-gap path. We only
     /// queue when shuffle is off; under shuffle the "next" track depends
     /// on a roll the audio thread does on its own, so guessing here

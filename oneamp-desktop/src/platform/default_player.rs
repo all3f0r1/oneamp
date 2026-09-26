@@ -21,7 +21,8 @@ use std::fmt;
 /// `MimeType=` line in `packaging/io.github.all3f0r1.OneAmp.desktop` and
 /// the `MimeType` element in the Windows installer.
 const AUDIO_EXTS: &[&str] = &[
-    "mp3", "flac", "ogg", "oga", "wav", "aac", "m4a", "m4b", "mp4", "alac",
+    "mp3", "flac", "ogg", "oga", "wav", "aac", "m4a", "m4b", "mp4", "alac", "aif", "aiff", "caf",
+    "mka",
 ];
 
 #[derive(Debug)]
