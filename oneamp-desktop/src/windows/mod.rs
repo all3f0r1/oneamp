@@ -309,8 +309,9 @@ impl WszWindowCoordinator {
         // Show shade window if in shade mode
         if self.window_state.shade_mode
             && let Some(ref mut shade) = self.shade_window
+            && let Some(action) = shade.show(ctx, audio_engine)
         {
-            shade.show(ctx, audio_engine);
+            main_action = Some(action);
         }
         if self.detached {
             self.track_main_window(ctx);

@@ -128,11 +128,8 @@ jobs:
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
-    # Baseline triaged 2026-06-16: known unmaintained/unsound informational
-    # advisories are ignored in `.cargo/audit.toml`. Kept advisory-only for
-    # now — surface new advisories in the report without gating the build.
-    # Flip `continue-on-error` off to make the audit blocking.
-    continue-on-error: true
+    # Blocking: known unmaintained/unsound informational advisories are
+    # triaged and ignored in `.cargo/audit.toml`; anything new fails CI.
     steps:
       - uses: actions/checkout@v5
 

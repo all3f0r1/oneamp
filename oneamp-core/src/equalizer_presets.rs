@@ -5,7 +5,6 @@
 
 use crate::equalizer::Equalizer;
 use anyhow::{Context, Result};
-#[cfg(feature = "serialization")]
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -45,8 +44,7 @@ pub use crate::equalizer::EQ_FREQUENCIES;
 /// [`Equalizer::headroom_db`] so the cascaded EQ never clips a
 /// normalized signal; user / `.eqf` presets can persist a hand-picked
 /// value.
-#[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct EqualizerPreset {
     /// Name of the preset
     pub name: String,
@@ -59,7 +57,7 @@ pub struct EqualizerPreset {
     /// computed headroom needed for the cascaded EQ not to clip.
     /// Defaults to 0.0 on deserialization for backward compatibility
     /// with user preset files saved before the field existed.
-    #[cfg_attr(feature = "serialization", serde(default))]
+    #[serde(default)]
     pub preamp_db: f32,
 }
 
@@ -113,6 +111,18 @@ impl BuiltinPresets {
 
     /// Get all built-in presets
     pub fn all() -> Vec<EqualizerPreset> {
+        Self::cached().to_vec()
+    }
+
+    /// Built-in presets, built once. Each build derives its preamp from a
+    /// dense frequency-response sweep, far too costly to redo per frame.
+    pub fn cached() -> &'static [EqualizerPreset] {
+        static PRESETS: std::sync::LazyLock<Vec<EqualizerPreset>> =
+            std::sync::LazyLock::new(BuiltinPresets::build_all);
+        &PRESETS
+    }
+
+    fn build_all() -> Vec<EqualizerPreset> {
         vec![
             Self::flat(),
             Self::rock(),
@@ -314,13 +324,12 @@ impl BuiltinPresets {
 
     /// Get preset by name
     pub fn get_by_name(name: &str) -> Option<EqualizerPreset> {
-        Self::all().into_iter().find(|p| p.name == name)
+        Self::cached().iter().find(|p| p.name == name).cloned()
     }
 }
 
 /// Custom preset manager
-#[cfg_attr(feature = "serialization", derive(Serialize, Deserialize))]
-#[derive(Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PresetManager {
     /// User-defined custom presets
     custom_presets: HashMap<String, EqualizerPreset>,
@@ -372,32 +381,17 @@ impl PresetManager {
 
     /// Save custom presets to JSON file
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        #[cfg(feature = "serialization")]
-        {
-            let json =
-                serde_json::to_string_pretty(self).context("Failed to serialize preset manager")?;
-            fs::write(path, json).context("Failed to write preset file")?;
-            Ok(())
-        }
-        #[cfg(not(feature = "serialization"))]
-        {
-            anyhow::bail!("Cannot save presets: serialization feature not enabled")
-        }
+        let json =
+            serde_json::to_string_pretty(self).context("Failed to serialize preset manager")?;
+        crate::write_atomic(path.as_ref(), json.as_bytes())
+            .context("Failed to write preset file")?;
+        Ok(())
     }
 
     /// Load custom presets from JSON file
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         let json = fs::read_to_string(path).context("Failed to read preset file")?;
-        #[cfg(feature = "serialization")]
-        {
-            let manager =
-                serde_json::from_str(&json).context("Failed to deserialize preset manager")?;
-            Ok(manager)
-        }
-        #[cfg(not(feature = "serialization"))]
-        {
-            anyhow::bail!("Cannot load presets: serialization feature not enabled")
-        }
+        serde_json::from_str(&json).context("Failed to deserialize preset manager")
     }
 
     /// Load or create new if file doesn't exist
@@ -417,7 +411,7 @@ impl PresetManager {
 
     /// Get total number of presets (built-in + custom)
     pub fn total_count(&self) -> usize {
-        BuiltinPresets::all().len() + self.custom_presets.len()
+        BuiltinPresets::cached().len() + self.custom_presets.len()
     }
 }
 

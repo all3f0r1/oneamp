@@ -471,6 +471,22 @@ impl MainMenu {
 /// Pick the FontId for the menu text. Mirrors `pledit_font_id` in
 /// `playlist_window` — uses the skin's bundled TTF when present so the
 /// menu visually matches the rest of the player.
+/// Output devices listed in a menu before the rest are cut off.
+pub const MAX_DEVICE_ROWS: usize = 12;
+
+/// Shorten `s` to at most `max_chars` characters, ending in `…` when
+/// cut. Counts `char`s, never bytes: slicing a device name by byte
+/// index panics when the cut lands inside a multi-byte character.
+pub fn ellipsize(s: &str, max_chars: usize) -> String {
+    match s.char_indices().nth(max_chars) {
+        None => s.to_string(),
+        Some(_) => {
+            let end = s.char_indices().nth(max_chars - 1).map_or(0, |(i, _)| i);
+            format!("{}…", &s[..end])
+        }
+    }
+}
+
 fn font_id_for_menu(skin_font_available: bool, size: f32) -> FontId {
     if skin_font_available {
         FontId::new(size, FontFamily::Name(WSZ_PLEDIT_FONT_FAMILY.into()))
@@ -762,12 +778,8 @@ pub fn build_menu_items(ctx: &MenuContext) -> Vec<MenuItem> {
         A::SelectOutputDevice(None),
         ctx.current_output_device.is_none(),
     )];
-    for name in ctx.output_devices.iter().take(12) {
-        let label = if name.len() > 28 {
-            format!("{}…", &name[..27])
-        } else {
-            name.clone()
-        };
+    for name in ctx.output_devices.iter().take(MAX_DEVICE_ROWS) {
+        let label = ellipsize(name, 28);
         let on = ctx.current_output_device.as_deref() == Some(name.as_str());
         output_items.push(MenuItem::toggle(
             label,
@@ -863,4 +875,22 @@ pub fn build_menu_items(ctx: &MenuContext) -> Vec<MenuItem> {
         MenuItem::parent("Audio", audio_menu),
         MenuItem::parent("Help", help_menu),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ellipsize;
+
+    #[test]
+    fn ellipsize_counts_chars_not_bytes() {
+        assert_eq!(ellipsize("short", 24), "short");
+        assert_eq!(ellipsize("abcdef", 6), "abcdef");
+        assert_eq!(ellipsize("abcdefg", 6), "abcde…");
+        // Byte 23 of this name falls inside `—`: the old `&name[..23]` panicked.
+        let name = "Écouteurs Bluetooth — Sony WH-1000XM4 stéréo";
+        let short = ellipsize(name, 24);
+        assert_eq!(short.chars().count(), 24);
+        assert!(short.ends_with('…'));
+        assert_eq!(ellipsize(name, 28).chars().count(), 28);
+    }
 }

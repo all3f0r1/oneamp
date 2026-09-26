@@ -21,12 +21,8 @@ impl OneAmpApp {
         ctx: &egui::Context,
     ) {
         match action {
-            MainWindowAction::PlayCurrent => {
-                let current = self.playlist.current_entry().map(|e| e.path.clone());
-                if let Some(path) = current {
-                    self.play_audio_path(path);
-                }
-            }
+            MainWindowAction::TransportPlay => self.transport_play(),
+            MainWindowAction::TransportPause => self.transport_pause(),
             MainWindowAction::OpenFile => self.open_files_replace(),
             MainWindowAction::OpenFolder => self.add_folder(),
             MainWindowAction::ToggleShade => {

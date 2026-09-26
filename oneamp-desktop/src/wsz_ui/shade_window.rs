@@ -1,6 +1,7 @@
 use super::components::buttons::WinampButton;
 use super::components::display::DigitalDisplay;
 use super::components::sliders::VolumeSlider;
+use super::main_window::MainWindowAction;
 use super::renderer::WszRenderer;
 use egui::{Context, Pos2, Vec2};
 use oneamp_core::wsz::skin::{SkinComponent, WszSkin};
@@ -13,6 +14,8 @@ pub struct ShadeWindow {
     is_playing: bool,
     is_paused: bool,
     mouse_pressed: bool,
+    /// Transport click for the app to handle, returned from `show`.
+    pending_action: Option<MainWindowAction>,
 }
 
 impl ShadeWindow {
@@ -29,10 +32,17 @@ impl ShadeWindow {
             is_playing: false,
             is_paused: false,
             mouse_pressed: false,
+            pending_action: None,
         }
     }
 
-    pub fn show(&mut self, ctx: &Context, audio_engine: Option<&AudioEngine>) {
+    /// Draw the shade bar. Play / Pause clicks come back as actions so
+    /// they share the app's transport semantics with every other surface.
+    pub fn show(
+        &mut self,
+        ctx: &Context,
+        audio_engine: Option<&AudioEngine>,
+    ) -> Option<MainWindowAction> {
         let scale = self.renderer.get_scale();
         let window_size = Vec2::new(275.0 * scale, 14.0 * scale);
 
@@ -52,6 +62,7 @@ impl ShadeWindow {
                 self.render_volume(ui, window_offset);
                 self.handle_input(ui, window_offset, audio_engine);
             });
+        self.pending_action.take()
     }
 
     fn render_background(&mut self, ui: &mut egui::Ui, offset: Pos2) {
@@ -271,24 +282,21 @@ impl ShadeWindow {
     }
 
     fn handle_button_click(&mut self, button: WinampButton, audio_engine: Option<&AudioEngine>) {
-        let Some(engine) = audio_engine else {
-            return;
-        };
-
-        let _ = match button {
-            WinampButton::Play => {
-                if self.is_paused {
-                    engine.send_command(AudioCommand::Resume)
-                } else {
-                    Ok(())
-                }
+        match button {
+            WinampButton::Play => self.pending_action = Some(MainWindowAction::TransportPlay),
+            WinampButton::Pause => self.pending_action = Some(MainWindowAction::TransportPause),
+            _ => {
+                let Some(engine) = audio_engine else {
+                    return;
+                };
+                let _ = match button {
+                    WinampButton::Stop => engine.send_command(AudioCommand::Stop),
+                    WinampButton::Next => engine.send_command(AudioCommand::Next),
+                    WinampButton::Previous => engine.send_command(AudioCommand::Previous),
+                    _ => Ok(()),
+                };
             }
-            WinampButton::Pause => engine.send_command(AudioCommand::Pause),
-            WinampButton::Stop => engine.send_command(AudioCommand::Stop),
-            WinampButton::Next => engine.send_command(AudioCommand::Next),
-            WinampButton::Previous => engine.send_command(AudioCommand::Previous),
-            _ => Ok(()),
-        };
+        }
     }
 
     pub fn update(&mut self, events: &[AudioEvent]) {

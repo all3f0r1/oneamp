@@ -10,13 +10,13 @@ use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 
+pub mod atomic_write;
 pub mod audio_capture;
 pub mod audio_thread_symphonia;
 pub mod eqf;
 pub mod equalizer;
 pub mod equalizer_presets;
 pub mod http_stream;
-#[cfg(feature = "audio")]
 pub mod output;
 pub mod playlist;
 pub mod recent_files;
@@ -24,6 +24,7 @@ pub mod symphonia_player;
 pub mod tag_editor;
 pub mod wsz;
 
+pub use atomic_write::write_atomic;
 pub use audio_capture::AudioCaptureBuffer;
 /// Highest master volume: 1.5 = 150 % (+3.5 dB). The part above 1.0 is
 /// applied ahead of the engine's limiter, so loud masters are limited
@@ -31,9 +32,7 @@ pub use audio_capture::AudioCaptureBuffer;
 pub const MAX_VOLUME: f32 = 1.5;
 
 pub use equalizer::{EQ_MAX_DB, Equalizer};
-#[cfg(feature = "serialization")]
 pub use equalizer_presets::{BuiltinPresets, EQ_FREQUENCIES, EqualizerPreset, PresetManager};
-#[cfg(feature = "audio")]
 pub use output::list_output_devices;
 pub use playlist::{Playlist, PlaylistEntry, SortOrder};
 pub use recent_files::{RecentFile, RecentFiles};
@@ -53,11 +52,7 @@ pub enum RepeatMode {
 /// the user's preamp. Album and track gains are both parsed from the
 /// file's metadata into [`TrackInfo`]; this picks which one is summed
 /// into the per-sample gain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[cfg_attr(
-    feature = "serialization",
-    derive(serde::Serialize, serde::Deserialize)
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ReplayGainMode {
     /// No ReplayGain — the user's preamp is applied alone.
     Off,
@@ -714,7 +709,18 @@ impl Drop for AudioEngine {
     fn drop(&mut self) {
         let _ = self.command_tx.send(AudioCommand::Shutdown);
         if let Some(handle) = self.thread_handle.take() {
-            let _ = handle.join();
+            // Bounded wait: a thread stuck in blocking I/O (stream
+            // connect, stalled read) must not hang app exit. Past the
+            // deadline the thread is detached; process exit reaps it.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while !handle.is_finished() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            if handle.is_finished() {
+                let _ = handle.join();
+            } else {
+                eprintln!("audio thread did not stop within 2 s; detaching");
+            }
         }
     }
 }

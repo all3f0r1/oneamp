@@ -84,14 +84,8 @@ impl ResumeStore {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).context("create resume.json parent dir")?;
-        }
-        let tmp = path.with_extension("json.tmp");
         let json = serde_json::to_string_pretty(self).context("serialize resume store")?;
-        fs::write(&tmp, json).context("write resume.json.tmp")?;
-        fs::rename(&tmp, path).context("rename resume.json into place")?;
-        Ok(())
+        oneamp_core::write_atomic(path, json.as_bytes()).context("write resume.json")
     }
 
     /// Returns the saved position for `path`, or `None` when nothing is

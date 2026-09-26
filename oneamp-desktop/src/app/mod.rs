@@ -330,8 +330,8 @@ pub struct OneAmpApp {
     undo: Vec<Playlist>,
     /// Global EQ curve set aside while an AUTO preset plays.
     eq_global_stash: Option<(Vec<f32>, f32)>,
-    /// Gains of the AUTO preset currently applied, if any.
-    eq_auto_applied: Option<Vec<f32>>,
+    /// AUTO preset currently applied, if any.
+    eq_auto_applied: Option<crate::config::AutoEqPreset>,
 
     /// Cached cpal output device list, refreshed at most once per
     /// `OUTPUT_DEVICE_REFRESH_INTERVAL`. Enumerating devices is cheap

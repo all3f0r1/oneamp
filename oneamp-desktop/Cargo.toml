@@ -16,7 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Core audio engine
-oneamp-core = { path = "../oneamp-core", features = ["audio", "serialization"] }
+oneamp-core = { path = "../oneamp-core" }
 
 # GUI framework
 eframe = { version = "0.30", features = ["wgpu"] }

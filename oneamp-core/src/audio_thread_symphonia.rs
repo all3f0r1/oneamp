@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::equalizer::BiquadFilter;
-#[cfg(feature = "audio")]
 use crate::output::AudioOutput;
 use crate::symphonia_player::SymphoniaPlayer;
 use crate::{

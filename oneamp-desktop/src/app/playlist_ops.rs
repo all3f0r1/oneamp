@@ -18,19 +18,6 @@ use std::path::{Path, PathBuf};
 /// the user's whole home directory.
 const FOLDER_WALK_MAX_DEPTH: u32 = 5;
 
-/// Write the desktop playlist as an extended M3U (`#EXTM3U`) file.
-pub(super) fn save_playlist_m3u(path: &Path, entries: &[PlaylistEntry]) -> anyhow::Result<()> {
-    use std::io::Write;
-    let mut file = std::fs::File::create(path)?;
-    writeln!(file, "#EXTM3U")?;
-    for entry in entries {
-        let duration_secs = entry.duration.unwrap_or(0.0).round() as i64;
-        writeln!(file, "#EXTINF:{},{}", duration_secs, entry.display_name())?;
-        writeln!(file, "{}", entry.path.display())?;
-    }
-    Ok(())
-}
-
 pub(super) fn is_audio_path(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -196,7 +183,7 @@ impl OneAmpApp {
                     let result = if is_pls {
                         self.playlist.save_pls(&path)
                     } else {
-                        save_playlist_m3u(&path, self.playlist.entries())
+                        self.playlist.save_m3u(&path)
                     };
                     if let Err(e) = result {
                         crate::dialog_util::show_error(&format!("Failed to save playlist: {}", e));

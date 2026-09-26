@@ -2,10 +2,9 @@ use anyhow::{Context, Result};
 use oneamp_core::{RecentFiles, RepeatMode};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EqualizerConfig {
     /// Every field is `#[serde(default)]` so adding a future field
     /// (or migrating from an older schema that lacked one) never
@@ -58,7 +57,7 @@ impl Default for EqualizerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct AudioEffectsConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -66,7 +65,7 @@ pub struct AudioEffectsConfig {
     pub master_bypass: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CrossfadeConfigWrapper {
     #[serde(default)]
     pub enabled: bool,
@@ -87,7 +86,7 @@ fn default_crossfade_duration() -> f32 {
     3.0
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GaplessConfigWrapper {
     #[serde(default = "default_gapless_enabled")]
     pub enabled: bool,
@@ -112,7 +111,7 @@ fn default_prebuffer() -> f32 {
     2.0
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PlaybackConfig {
     #[serde(default = "default_volume")]
     pub volume: f32,
@@ -172,7 +171,7 @@ impl From<RepeatMode> for RepeatModeConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppConfig {
     /// Every field is `#[serde(default)]` so a config file written by
     /// an older OneAmp version (missing fields added since) still
@@ -609,15 +608,7 @@ impl AppConfig {
     /// instead of touching the user's real config file.
     pub fn save_to(&self, path: &Path) -> Result<()> {
         let content = serde_json::to_string_pretty(self).context("Failed to serialize config")?;
-        let tmp = path.with_extension("json.tmp");
-        {
-            let mut f = fs::File::create(&tmp).context("Failed to create temp config file")?;
-            f.write_all(content.as_bytes())
-                .context("Failed to write temp config file")?;
-            f.sync_all().context("Failed to fsync temp config file")?;
-        }
-        fs::rename(&tmp, path).context("Failed to rename temp config file into place")?;
-        Ok(())
+        oneamp_core::write_atomic(path, content.as_bytes()).context("Failed to write config file")
     }
 }
 

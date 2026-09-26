@@ -11,7 +11,6 @@ use anyhow::{Context, Result};
 use oneamp_core::PlaylistEntry;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -53,19 +52,8 @@ impl Session {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir).context("Failed to create config directory")?;
-        }
         let content = serde_json::to_string(self).context("Failed to serialize session")?;
-        let tmp = path.with_extension("json.tmp");
-        {
-            let mut f = fs::File::create(&tmp).context("Failed to create temp session file")?;
-            f.write_all(content.as_bytes())
-                .context("Failed to write temp session file")?;
-            f.sync_all().context("Failed to fsync temp session file")?;
-        }
-        fs::rename(&tmp, path).context("Failed to rename temp session file into place")?;
-        Ok(())
+        oneamp_core::write_atomic(path, content.as_bytes()).context("Failed to write session file")
     }
 }
 

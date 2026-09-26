@@ -1253,28 +1253,36 @@ impl Playlist {
         Ok(Some(playlist))
     }
 
-    /// Save playlist to .m3u file
+    /// Save playlist to .m3u file with absolute track paths.
     pub fn save_m3u<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let mut file = File::create(path).context("Failed to create .m3u file")?;
+        self.write_m3u(path.as_ref(), false)
+    }
 
-        writeln!(file, "#EXTM3U")?;
-
+    /// The one M3U writer. `relative` writes track paths relative to the
+    /// playlist's directory where possible. Each track gets an
+    /// `#EXTINF:<secs>,<label>` line — `-1` secs when the duration is
+    /// unknown (the M3U convention), label `Artist - Title` when both are
+    /// known, else the entry's display name. Written atomically.
+    fn write_m3u(&self, path: &Path, relative: bool) -> Result<()> {
+        use std::fmt::Write as _;
+        let base_dir = if relative { path.parent() } else { None };
+        let mut out = String::from("#EXTM3U\n");
         for entry in &self.entries {
-            if let Some(duration) = entry.duration {
-                let title = entry.display_name();
-                let artist = entry.artist.as_deref().unwrap_or("");
-                writeln!(
-                    file,
-                    "#EXTINF:{},{} - {}",
-                    duration.round() as i32,
-                    artist,
-                    title
-                )?;
-            }
-            writeln!(file, "{}", entry.path.display())?;
+            let secs = entry.duration.map_or(-1, |d| d.round() as i64);
+            let label = match (&entry.artist, &entry.title) {
+                (Some(artist), Some(title)) if !artist.is_empty() => {
+                    format!("{artist} - {title}")
+                }
+                _ => entry.display_name(),
+            };
+            let track = if relative {
+                relativize_path(&entry.path, base_dir)
+            } else {
+                entry.path.clone()
+            };
+            let _ = writeln!(out, "#EXTINF:{secs},{label}\n{}", track.display());
         }
-
-        Ok(())
+        crate::write_atomic(path, out.as_bytes()).context("Failed to write .m3u file")
     }
 
     /// Load playlist from .m3u file.
@@ -1311,7 +1319,10 @@ impl Playlist {
                 // Parse EXTINF line: #EXTINF:duration,artist - title
                 let parts: Vec<&str> = extinf.splitn(2, ',').collect();
                 if parts.len() == 2 {
-                    if let Ok(dur) = parts[0].trim().parse::<f32>() {
+                    // `-1` is the M3U spelling of "unknown duration".
+                    if let Ok(dur) = parts[0].trim().parse::<f32>()
+                        && dur >= 0.0
+                    {
                         current_duration = Some(dur);
                     }
                     current_title = Some(parts[1].trim().to_string());
@@ -1341,28 +1352,7 @@ impl Playlist {
     /// relative to `path` (e.g. on a different drive/root) fall back to
     /// their absolute path. Mirror of [`save_m3u`] otherwise.
     pub fn save_m3u_relative<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let base_dir = path.as_ref().parent().map(Path::to_path_buf);
-        let mut file = File::create(path.as_ref()).context("Failed to create .m3u file")?;
-
-        writeln!(file, "#EXTM3U")?;
-
-        for entry in &self.entries {
-            if let Some(duration) = entry.duration {
-                let title = entry.display_name();
-                let artist = entry.artist.as_deref().unwrap_or("");
-                writeln!(
-                    file,
-                    "#EXTINF:{},{} - {}",
-                    duration.round() as i32,
-                    artist,
-                    title
-                )?;
-            }
-            let rel = relativize_path(&entry.path, base_dir.as_deref());
-            writeln!(file, "{}", rel.display())?;
-        }
-
-        Ok(())
+        self.write_m3u(path.as_ref(), true)
     }
 
     /// Save playlist to .pls file
@@ -1971,6 +1961,41 @@ mod tests {
         // Under the base dir → relative; outside → absolute fallback.
         assert!(content.contains("a/song.mp3"));
         assert!(content.contains("/elsewhere/other.mp3"));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_m3u_extinf_format_and_round_trip() {
+        let dir = std::env::temp_dir().join(format!("oneamp_m3u_fmt_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let m3u = dir.join("list.m3u");
+
+        let mut pl = Playlist::new("Test".to_string());
+        pl.add_entry(PlaylistEntry::with_metadata(
+            PathBuf::from("/m/a.mp3"),
+            Some("Title".into()),
+            Some("Artist".into()),
+            None,
+            Some(180.2),
+        ));
+        pl.add_entry(PlaylistEntry::with_metadata(
+            PathBuf::from("/m/b.mp3"),
+            Some("Solo".into()),
+            None,
+            None,
+            None,
+        ));
+        pl.save_m3u(&m3u).unwrap();
+
+        let content = std::fs::read_to_string(&m3u).unwrap();
+        assert_eq!(
+            content,
+            "#EXTM3U\n#EXTINF:180,Artist - Title\n/m/a.mp3\n#EXTINF:-1,Solo\n/m/b.mp3\n"
+        );
+        let loaded = Playlist::load_m3u(&m3u).unwrap();
+        assert_eq!(loaded.entries()[0].duration, Some(180.0));
+        assert_eq!(loaded.entries()[1].duration, None);
 
         std::fs::remove_dir_all(&dir).ok();
     }

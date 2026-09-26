@@ -41,8 +41,10 @@ impl VisualizerMode {
 /// (because they require state outside the window itself, like the playlist).
 #[derive(Debug, Clone)]
 pub enum MainWindowAction {
-    /// Play the currently selected playlist entry (Play button while stopped).
-    PlayCurrent,
+    /// Play button: start / resume / restart (`transport_play`).
+    TransportPlay,
+    /// Pause button: toggle pause, no-op when stopped (`transport_pause`).
+    TransportPause,
     /// Open a file dialog to add and play a track (Eject button).
     OpenFile,
     /// Open a folder picker and append every audio file found inside

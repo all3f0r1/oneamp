@@ -471,7 +471,7 @@ impl EqualizerWindow {
         // user-defined presets at the bottom. User presets render in a
         // softer cyan so they're visually distinct from the green
         // built-ins without breaking the dark skin palette.
-        let presets = BuiltinPresets::all();
+        let presets = BuiltinPresets::cached();
         let user_presets = self.user_presets.clone();
         let mut rows: Vec<PresetRow> = Vec::with_capacity(presets.len() + user_presets.len() + 3);
         rows.push(PresetRow::LoadEqf);

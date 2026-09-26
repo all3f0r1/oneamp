@@ -225,6 +225,12 @@ impl OneAmpApp {
                         let next = self.playlist.next_entry().map(|e| e.path.clone());
                         if let Some(path) = next {
                             self.play_audio_path(path);
+                        } else {
+                            // End of playlist: route through a real Stop so
+                            // the engine's `Stopped` reaches every window,
+                            // not just the ones that also read `Finished`.
+                            self.audio.send_command(AudioCommand::Stop);
+                            self.state.stop();
                         }
                     }
                 }
@@ -324,9 +330,7 @@ impl OneAmpApp {
                 }
                 _ => {}
             }
-            if let oneamp_core::AudioEvent::EqualizerUpdated(_, gains) = &event {
-                self.note_eq_update(gains);
-            }
+            self.note_eq_update(&event);
             self.state.handle_audio_event(event.clone());
             events.push(event);
         }

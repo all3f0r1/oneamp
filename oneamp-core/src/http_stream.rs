@@ -25,7 +25,7 @@ use anyhow::{Context, Result, anyhow};
 use arc_swap::ArcSwap;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use symphonia::core::io::MediaSource;
@@ -77,6 +77,91 @@ const RECONNECT_POLL_TIMEOUT: Duration = Duration::from_millis(50);
 /// junk bytes as undecodable filler and recovers cleanly once the real
 /// body resumes.
 const RECONNECT_SILENCE_CHUNK: usize = 4096;
+
+/// Longest the body may go silent before we call the connection dead
+/// and hand it to the reconnect path. ureq's timeouts only cover the
+/// request / response headers (its `recv_body` is a total-duration
+/// budget, wrong for an endless radio stream), so a server that stops
+/// sending without closing would otherwise block the audio thread —
+/// and with it `Stop` / `Shutdown` — forever.
+const BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Chunks buffered between the body pump thread and the reader.
+/// 32 × 16 KiB ≈ 0.5 MiB: minutes of 128 kbps audio at most, bounded.
+const PUMP_CHUNKS: usize = 32;
+const PUMP_CHUNK_SIZE: usize = 16 * 1024;
+
+/// Body reader that does the blocking socket reads on its own thread
+/// and hands chunks over a bounded channel, so `read` can give up after
+/// `BODY_IDLE_TIMEOUT` of inactivity with `TimedOut` (which the
+/// `HttpStream` read path treats as a reconnect trigger).
+///
+/// ponytail: a pump stuck in a stalled socket read outlives its reader
+/// until the OS drops the connection — one parked thread per dead
+/// stream. Needs a closable socket (custom ureq transport) to reclaim.
+struct PumpReader {
+    rx: Mutex<Receiver<std::io::Result<Vec<u8>>>>,
+    idle: Duration,
+    pending: Vec<u8>,
+    pos: usize,
+}
+
+impl PumpReader {
+    fn spawn(mut body: impl Read + Send + 'static, idle: Duration) -> Self {
+        let (tx, rx) = mpsc::sync_channel(PUMP_CHUNKS);
+        std::thread::Builder::new()
+            .name("http-stream-pump".into())
+            .spawn(move || Self::pump(&mut body, &tx))
+            .expect("spawn http-stream-pump thread");
+        Self {
+            rx: Mutex::new(rx),
+            idle,
+            pending: Vec::new(),
+            pos: 0,
+        }
+    }
+
+    fn pump(body: &mut impl Read, tx: &SyncSender<std::io::Result<Vec<u8>>>) {
+        let mut buf = vec![0u8; PUMP_CHUNK_SIZE];
+        loop {
+            let msg = match body.read(&mut buf) {
+                Ok(n) => Ok(buf[..n].to_vec()),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => Err(e),
+            };
+            // Stop after EOF (empty chunk) or an error, or once the
+            // reader is gone.
+            let last = !matches!(&msg, Ok(v) if !v.is_empty());
+            if tx.send(msg).is_err() || last {
+                return;
+            }
+        }
+    }
+}
+
+impl Read for PumpReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.pos == self.pending.len() {
+            let chunk = match self.rx.get_mut().unwrap().recv_timeout(self.idle) {
+                Ok(chunk) => chunk?,
+                Err(RecvTimeoutError::Timeout) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "HTTP stream idle",
+                    ));
+                }
+                // Pump already reported EOF / an error and exited.
+                Err(RecvTimeoutError::Disconnected) => return Ok(0),
+            };
+            self.pending = chunk;
+            self.pos = 0;
+        }
+        let n = buf.len().min(self.pending.len() - self.pos);
+        buf[..n].copy_from_slice(&self.pending[self.pos..self.pos + n]);
+        self.pos += n;
+        Ok(n)
+    }
+}
 
 /// Live HTTP audio stream that filters ICY metadata blocks out of the
 /// byte stream and publishes the latest `StreamTitle` separately.
@@ -144,9 +229,8 @@ impl HttpStream {
     /// wrapped in `symphonia::core::io::MediaSourceStream`.
     ///
     /// Times out after 15 s on connect to avoid stalling the audio
-    /// thread on a dead URL. After connect, the per-read timeout is
-    /// generous — radio streams can have multi-second packet gaps
-    /// during reconnects.
+    /// thread on a dead URL. After connect, a body silent for
+    /// `BODY_IDLE_TIMEOUT` is treated as dropped and reconnected.
     pub fn open(url: &str) -> Result<Self> {
         let (body, meta_interval, content_type) = Self::connect_body(url)?;
         let icy_title: IcySnapshot = Arc::new(ArcSwap::from_pointee(String::new()));
@@ -201,8 +285,8 @@ impl HttpStream {
             .map(|s| s.to_string());
 
         let (_parts, body) = response.into_parts();
-        let reader = body.into_reader();
-        let body: Box<dyn Read + Send + Sync> = Box::new(reader);
+        let body: Box<dyn Read + Send + Sync> =
+            Box::new(PumpReader::spawn(body.into_reader(), BODY_IDLE_TIMEOUT));
         Ok((body, meta_interval, content_type))
     }
 
@@ -557,6 +641,27 @@ pub fn validate_stream_url(url: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pump_reader_passes_bytes_then_eof_and_times_out_when_idle() {
+        let mut r = PumpReader::spawn(&b"hello"[..], Duration::from_secs(5));
+        let mut out = Vec::new();
+        r.read_to_end(&mut out).unwrap();
+        assert_eq!(out, b"hello");
+
+        // A body that never sends (sender kept alive, nothing written).
+        struct Stalled(Mutex<Receiver<()>>);
+        impl Read for Stalled {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                let _ = self.0.get_mut().unwrap().recv();
+                Ok(0)
+            }
+        }
+        let (_keep, rx) = mpsc::channel();
+        let mut r = PumpReader::spawn(Stalled(Mutex::new(rx)), Duration::from_millis(50));
+        let err = r.read(&mut [0u8; 8]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+    }
 
     #[test]
     fn parse_stream_title_extracts_content() {

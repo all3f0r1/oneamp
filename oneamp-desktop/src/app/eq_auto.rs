@@ -9,7 +9,7 @@
 
 use super::OneAmpApp;
 use crate::config::AutoEqPreset;
-use oneamp_core::AudioCommand;
+use oneamp_core::{AudioCommand, AudioEvent};
 use std::path::Path;
 
 impl OneAmpApp {
@@ -52,7 +52,7 @@ impl OneAmpApp {
                     self.eq_global_stash = Some(self.global_eq());
                 }
                 self.send_eq_curve(&p.gains, p.preamp_db);
-                self.eq_auto_applied = Some(p.gains);
+                self.eq_auto_applied = Some(p);
             }
             None => self.restore_global_eq(),
         }
@@ -72,13 +72,28 @@ impl OneAmpApp {
             .send_command(AudioCommand::SetEqualizerPreamp(preamp_db));
     }
 
-    /// Engine echoed new gains. If they differ from the auto-loaded
-    /// preset, the user edited the EQ by hand: that curve is now global.
-    pub(super) fn note_eq_update(&mut self, gains: &[f32]) {
-        let differs = |a: &[f32]| {
-            a.len() != gains.len() || a.iter().zip(gains).any(|(x, y)| (x - y).abs() > 0.01)
+    /// Engine echoed new gains or preamp. If either differs from the
+    /// auto-loaded preset, the user edited the EQ by hand: that curve is
+    /// now global. Each echo is checked against its own field — the
+    /// bands echo lands before the preamp one, so comparing the whole
+    /// curve at that point would misread our own preset load as manual.
+    pub(super) fn note_eq_update(&mut self, event: &AudioEvent) {
+        let Some(applied) = &self.eq_auto_applied else {
+            return;
         };
-        if self.eq_auto_applied.as_deref().is_some_and(differs) {
+        let manual = match event {
+            AudioEvent::EqualizerUpdated(_, gains) => {
+                applied.gains.len() != gains.len()
+                    || applied
+                        .gains
+                        .iter()
+                        .zip(gains)
+                        .any(|(x, y)| (x - y).abs() > 0.01)
+            }
+            AudioEvent::EqualizerPreampUpdated(db) => (applied.preamp_db - db).abs() > 0.01,
+            _ => false,
+        };
+        if manual {
             self.eq_auto_applied = None;
             self.eq_global_stash = None;
         }

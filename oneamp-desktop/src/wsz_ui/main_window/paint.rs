@@ -1,4 +1,5 @@
 use super::{MainWindowAction, VisualizerMode, WszMainWindow};
+use crate::wsz_ui::components::{MAX_DEVICE_ROWS, ellipsize};
 use egui::{Pos2, Vec2};
 use oneamp_core::wsz::skin::SkinComponent;
 use std::sync::OnceLock;
@@ -395,12 +396,8 @@ impl WszMainWindow {
                 MainWindowAction::SelectOutputDevice(None),
                 Some(self.current_output_device.is_none()),
             ));
-            for name in self.output_devices.iter().take(10) {
-                let label = if name.len() > 24 {
-                    format!("{}…", &name[..23])
-                } else {
-                    name.clone()
-                };
+            for name in self.output_devices.iter().take(MAX_DEVICE_ROWS) {
+                let label = ellipsize(name, 24);
                 let checked = self.current_output_device.as_deref() == Some(name.as_str());
                 rows.push((
                     label,

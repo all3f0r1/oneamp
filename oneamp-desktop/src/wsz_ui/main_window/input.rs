@@ -232,25 +232,11 @@ impl WszMainWindow {
         audio_engine: Option<&AudioEngine>,
     ) -> Option<MainWindowAction> {
         match button {
-            WinampButton::Play => {
-                if self.is_paused {
-                    if let Some(engine) = audio_engine {
-                        let _ = engine.send_command(AudioCommand::Resume);
-                    }
-                    None
-                } else if !self.is_playing {
-                    // Stopped: ask the app to start the current playlist track
-                    Some(MainWindowAction::PlayCurrent)
-                } else {
-                    None
-                }
-            }
-            WinampButton::Pause => {
-                if let Some(engine) = audio_engine {
-                    let _ = engine.send_command(AudioCommand::Pause);
-                }
-                None
-            }
+            // Play / Pause share the app's transport semantics (start,
+            // resume, restart; pause toggles) with the keyboard, shade and
+            // playlist surfaces.
+            WinampButton::Play => Some(MainWindowAction::TransportPlay),
+            WinampButton::Pause => Some(MainWindowAction::TransportPause),
             WinampButton::Stop => {
                 if let Some(engine) = audio_engine {
                     let _ = engine.send_command(AudioCommand::Stop);

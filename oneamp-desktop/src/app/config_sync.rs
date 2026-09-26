@@ -40,32 +40,7 @@ impl OneAmpApp {
         self.state.equalizer.current_preset =
             self.windows.equalizer_current_preset().map(String::from);
 
-        // Mirror every persistable field from live state back onto the
-        // config struct. Anything not mutated here (audio_effects,
-        // gapless, …) keeps whatever the previous load produced so
-        // they survive the round-trip untouched.
-        self.config.equalizer.enabled = self.state.equalizer.enabled;
-        // The global curve, not an auto-loaded preset that's playing.
-        let (gains, preamp_db) = self.global_eq();
-        self.config.equalizer.gains = gains;
-        self.config.equalizer.preamp_db = preamp_db;
-        self.config.equalizer.current_preset = self.state.equalizer.current_preset.clone();
-        self.config.playback.volume = self.state.volume.level;
-        self.config.playback.muted = self.state.volume.muted;
-        self.config.playback.balance = self.state.volume.balance;
-        self.config.playback.repeat_mode = self.state.repeat_mode.into();
-        self.config.playback.shuffle_enabled = self.state.shuffle_enabled;
-        self.config.first_run = false;
-        self.config.always_on_top = self.always_on_top;
-        self.config.recent_files = self.recent.clone();
-        self.config.user_scale = self.user_scale;
-        self.config.shade_mode = self.windows.is_shade_mode();
-        self.config.show_equalizer = self.windows.is_equalizer_visible();
-        self.config.show_playlist = self.windows.is_playlist_visible();
-        self.config.windows = self.live_window_layout();
-        self.config.visualizer_mode =
-            visualizer_to_config(self.windows.main_window_mut().visualizer_mode());
-        self.config.show_remaining = self.windows.main_window_mut().show_remaining();
+        self.config = self.live_config();
 
         match self.config.save() {
             Ok(()) => {
@@ -89,6 +64,40 @@ impl OneAmpApp {
         }
     }
 
+    /// `self.config` with every persistable live field mirrored in. The
+    /// single list of those fields: `flush_config` saves this snapshot and
+    /// `check_persistable_drift` compares it, so a new setting can't be
+    /// saved without being drift-checked (or the reverse). Anything not
+    /// set here (audio_effects, gapless, …) keeps whatever the previous
+    /// load produced.
+    fn live_config(&mut self) -> crate::config::AppConfig {
+        let mut c = self.config.clone();
+        c.equalizer.enabled = self.state.equalizer.enabled;
+        // The global curve, not an auto-loaded preset that's playing.
+        let (gains, preamp_db) = self.global_eq();
+        c.equalizer.gains = gains;
+        c.equalizer.preamp_db = preamp_db;
+        // The EQ window owns the preset name: set on a preset click,
+        // cleared on a manual band drag.
+        c.equalizer.current_preset = self.windows.equalizer_current_preset().map(String::from);
+        c.playback.volume = self.state.volume.level;
+        c.playback.muted = self.state.volume.muted;
+        c.playback.balance = self.state.volume.balance;
+        c.playback.repeat_mode = self.state.repeat_mode.into();
+        c.playback.shuffle_enabled = self.state.shuffle_enabled;
+        c.first_run = false;
+        c.always_on_top = self.always_on_top;
+        c.recent_files = self.recent.clone();
+        c.user_scale = self.user_scale;
+        c.shade_mode = self.windows.is_shade_mode();
+        c.show_equalizer = self.windows.is_equalizer_visible();
+        c.show_playlist = self.windows.is_playlist_visible();
+        c.windows = self.live_window_layout();
+        c.visualizer_mode = visualizer_to_config(self.windows.main_window_mut().visualizer_mode());
+        c.show_remaining = self.windows.main_window_mut().show_remaining();
+        c
+    }
+
     /// Snapshot of the coordinator's window layout in config form.
     fn live_window_layout(&self) -> crate::config::WindowLayoutConfig {
         let [equalizer_offset, playlist_offset] = self.windows.subwindow_offsets();
@@ -107,68 +116,7 @@ impl OneAmpApp {
     /// mutation sites — and catches changes pushed by external sources
     /// (MPRIS, multimedia keys, drag-drop) for free.
     pub(super) fn check_persistable_drift(&mut self) {
-        let mut changed = false;
-        if (self.config.playback.volume - self.state.volume.level).abs() > f32::EPSILON {
-            changed = true;
-        }
-        if self.config.playback.muted != self.state.volume.muted {
-            changed = true;
-        }
-        if (self.config.playback.balance - self.state.volume.balance).abs() > f32::EPSILON {
-            changed = true;
-        }
-        let live_repeat: crate::config::RepeatModeConfig = self.state.repeat_mode.into();
-        if self.config.playback.repeat_mode != live_repeat {
-            changed = true;
-        }
-        if self.config.playback.shuffle_enabled != self.state.shuffle_enabled {
-            changed = true;
-        }
-        if self.config.equalizer.enabled != self.state.equalizer.enabled {
-            changed = true;
-        }
-        let (gains, preamp_db) = self.global_eq();
-        if (self.config.equalizer.preamp_db - preamp_db).abs() > f32::EPSILON {
-            changed = true;
-        }
-        if self.config.equalizer.gains != gains {
-            changed = true;
-        }
-        if self.config.always_on_top != self.always_on_top {
-            changed = true;
-        }
-        if self.config.user_scale != self.user_scale {
-            changed = true;
-        }
-        if self.config.shade_mode != self.windows.is_shade_mode() {
-            changed = true;
-        }
-        if self.config.show_equalizer != self.windows.is_equalizer_visible() {
-            changed = true;
-        }
-        if self.config.show_playlist != self.windows.is_playlist_visible() {
-            changed = true;
-        }
-        if self.config.windows != self.live_window_layout() {
-            changed = true;
-        }
-        let live_vis = visualizer_to_config(self.windows.main_window_mut().visualizer_mode());
-        if self.config.visualizer_mode != live_vis {
-            changed = true;
-        }
-        if self.config.show_remaining != self.windows.main_window_mut().show_remaining() {
-            changed = true;
-        }
-        if self.config.recent_files != self.recent {
-            changed = true;
-        }
-        // Preset name: query the EQ window each tick (the user may
-        // have picked a preset since the last flush) and compare
-        // against the persisted name.
-        let live_preset = self.windows.equalizer_current_preset().map(String::from);
-        if self.config.equalizer.current_preset != live_preset {
-            changed = true;
-        }
+        let changed = self.live_config() != self.config;
         // Only start the debounce clock on the first divergence. Calling
         // `mark_dirty()` every frame would keep pushing the deadline
         // forward and the flush in `update` would never fire.

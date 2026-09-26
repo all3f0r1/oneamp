@@ -12,7 +12,7 @@ pub mod visualization;
 pub use buttons::{ButtonManager, WinampButton};
 pub use clutterbar::Clutterbar;
 pub use display::DigitalDisplay;
-pub use main_menu::{MainMenu, MenuContext, build_menu_items};
+pub use main_menu::{MAX_DEVICE_ROWS, MainMenu, MenuContext, build_menu_items, ellipsize};
 pub use playpaus::{PlayState, PlayStateIndicator};
 pub use sliders::{BalanceSlider, PositionSlider, VolumeSlider};
 pub use title_scroll::TitleScroller;
