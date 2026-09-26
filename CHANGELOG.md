@@ -4,7 +4,7 @@ All notable changes to OneAmp are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.1] — 2026-09-26
 
 ### Fixed
 - The last ~0.5 s of a track is no longer cut when playback stops there
