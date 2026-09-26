@@ -4,6 +4,40 @@ All notable changes to OneAmp are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-09-26
+
+Playlist editor polish: Winamp's popup menus, time fields and sizing, with
+every menu entry wired.
+
+### Added
+- Playlist menus: ADD URL, ADD DIR, REM CROP (keep only the selection) and
+  REM MISC (remove files that no longer exist) now work. Undo with
+  `Ctrl+Z`.
+- Master volume goes up to 150 % (default stays 100 %, two thirds of the
+  slider). Above 100 % loud tracks can clip.
+
+### Changed
+- Playlist popup menus behave like Winamp's: the bottom row covers the
+  button, the hovered row lights up, and press-drag-release picks an entry
+  in one gesture (a plain click still opens the menu).
+- The playlist's upper time field shows the selection / playlist length
+  (`+` when some lengths are unknown); the small lower field shows the
+  current track's elapsed time, blank when stopped.
+- The playlist resizes in 29-px steps, like Winamp.
+- Equalizer range is ±12 dB (was ±20 dB), matching the skin's labels.
+  `.eqf` files map to the same range, so imported presets are gentler than
+  before; saved gains beyond ±12 dB are clamped.
+- The playlist's mini play button starts a stopped track, pause toggles,
+  and eject replaces the playlist like the main window's.
+
+### Fixed
+- ADD/REM/SEL/MISC/LIST buttons stopped responding after the playlist was
+  resized.
+- The pressed scrollbar thumb showed a cyan column; LIST OPTS was one
+  pixel off.
+- The pressed Eject sprite was read two pixels too low.
+- Clicking a popup entry no longer also selects the playlist row beneath.
+
 ## [1.1.0] — 2026-09-24
 
 Winamp Classic habits: arrange your windows, get your session back and
