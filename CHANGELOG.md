@@ -4,6 +4,34 @@ All notable changes to OneAmp are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] — 2026-09-26
+
+### Fixed
+- A radio stream that stops sending without closing the connection no
+  longer freezes Stop and app exit: after 10 s of silence the stream
+  reconnects, and closing the app waits at most 2 s for the audio thread.
+- The player no longer shows "playing" after the last track of the
+  playlist ends.
+- EQ AUTO: changing only the preamp while a per-track preset plays now
+  counts as a manual edit, so the old global curve no longer comes back.
+- Output device names with accented or non-Latin characters no longer
+  crash the app when the menus shorten them.
+- Play and Pause behave the same on every surface (main window, window
+  shade, keyboard, playlist buttons): Play starts, resumes or restarts
+  the track; Pause toggles and does nothing when stopped.
+- Saved M3U playlists write `#EXTINF:-1` for an unknown duration and
+  `Artist - Title` only when both are known.
+- User EQ presets and saved playlists are written atomically, like the
+  config and session, so a crash mid-save can't truncate them.
+
+### Performance
+- The EQ presets menu no longer rebuilds the built-in presets on every
+  frame while open.
+
+### Changed
+- `oneamp-core`: the `audio` and `serialization` Cargo features are gone;
+  their dependencies are always on. The security audit now fails CI.
+
 ## [1.3.1] — 2026-09-26
 
 ### Fixed
