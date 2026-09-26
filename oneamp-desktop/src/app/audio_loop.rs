@@ -480,7 +480,8 @@ impl OneAmpApp {
     }
 
     /// Send `AudioCommand::QueueNext` for the upcoming playlist track when
-    /// the current one is in its last ~2 seconds. The audio thread uses
+    /// the current one is in its last ~2 seconds (crossfade length + 1 s
+    /// with crossfade on). The audio thread uses
     /// the preloaded decoder to swap into the running output stream
     /// without rebuilding the device — that's the no-gap path. We only
     /// queue when shuffle is off; under shuffle the "next" track depends
@@ -492,7 +493,15 @@ impl OneAmpApp {
             return;
         }
         let remaining = total - current;
-        if !(0.0..2.0).contains(&remaining) {
+        // Crossfade mixes the next track in from `duration_secs` before
+        // the end, so it has to be loaded (with a second to spare) by then.
+        let lead = if self.config.crossfade.enabled {
+            self.config.crossfade.duration_secs + 1.0
+        } else {
+            0.0
+        }
+        .max(2.0);
+        if !(0.0..lead).contains(&remaining) {
             return;
         }
         if self.playlist.entries().len() < 2 {

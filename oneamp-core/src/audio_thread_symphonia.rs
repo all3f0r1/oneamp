@@ -684,6 +684,12 @@ impl PeakLimiter {
         }
     }
 
+    /// Samples still held in the delay line; feed this many zeros
+    /// through `process` to get them out at end of stream.
+    fn tail_len(&self, channels: u16) -> usize {
+        (self.window - 1) * channels.max(1) as usize
+    }
+
     fn process(&mut self, samples: &mut [f32], channels: u16) {
         let ch = channels.max(1) as usize;
         if ch != self.channels {
@@ -793,6 +799,9 @@ struct PlaybackState {
     /// Decoded audio to play before asking the decoder for more — the
     /// incoming track's leftover after a crossfade swap.
     carry: Vec<f32>,
+    /// Decoder hit EOS with nothing to swap in: the output is playing
+    /// out what it has queued before the EOS handling tears it down.
+    draining: bool,
 }
 
 /// A track preloaded by `AudioCommand::QueueNext`. Held alongside the active
@@ -1007,6 +1016,7 @@ pub fn audio_thread_main_symphonia(
                                                 output,
                                                 is_paused: false,
                                                 carry: Vec::new(),
+                                                draining: false,
                                             });
                                             current_icy = Some(icy_handle);
                                             current_reconnect = Some(reconnect_handle);
@@ -1147,6 +1157,7 @@ pub fn audio_thread_main_symphonia(
                             match state.player.seek(attempt) {
                                 Ok(()) => {
                                     state.output.clear();
+                                    state.draining = false;
                                     // Same rate: just flushes the
                                     // lookahead delay line.
                                     limiter.set_sample_rate(state.player.sample_rate() as f32);
@@ -1379,12 +1390,13 @@ pub fn audio_thread_main_symphonia(
                     && remaining > 0.0
                     && remaining < engine_state.crossfade_duration_secs
                 {
-                    let fade_pos = ((engine_state.crossfade_duration_secs - remaining)
-                        / engine_state.crossfade_duration_secs)
-                        .clamp(0.0, 1.0);
-                    let fade_in = (fade_pos * std::f32::consts::FRAC_PI_2).sin();
-                    let fade_out = ((1.0 - fade_pos) * std::f32::consts::FRAC_PI_2).sin();
-                    Some((fade_in, fade_out))
+                    let fade_pos = (engine_state.crossfade_duration_secs - remaining)
+                        / engine_state.crossfade_duration_secs;
+                    // Fade position advanced per output frame.
+                    let step = 1.0
+                        / (engine_state.crossfade_duration_secs
+                            * state.player.sample_rate() as f32);
+                    Some((fade_pos, step))
                 } else {
                     None
                 }
@@ -1393,7 +1405,9 @@ pub fn audio_thread_main_symphonia(
             };
 
             // Check if output needs more data
-            if state.output.needs_data() {
+            if state.draining {
+                end_of_stream = state.output.is_drained();
+            } else if state.output.needs_data() {
                 let decoded = if state.carry.is_empty() {
                     state.player.decode_next()
                 } else {
@@ -1410,7 +1424,7 @@ pub fn audio_thread_main_symphonia(
                             // EOS swap plays it first, so no incoming
                             // sample is lost at either seam.
                             let mut crossfading = false;
-                            if let Some((fade_in, fade_out)) = crossfade_state
+                            if let Some((fade_pos, step)) = crossfade_state
                                 && let Some(pending) = next_pending.as_mut()
                             {
                                 while pending.carry.len() < samples.len() {
@@ -1419,12 +1433,28 @@ pub fn audio_thread_main_symphonia(
                                         _ => break,
                                     }
                                 }
+                                // The mix gets the outgoing track's
+                                // ReplayGain below; pre-scale the
+                                // incoming one so it ends at its own.
+                                let rg_in = 10_f32.powf(
+                                    (engine_state.resolve_replaygain_db(&pending.track)
+                                        - engine_state.track_gain_db)
+                                        / 20.0,
+                                );
+                                let ch = channels.max(1) as usize;
                                 let len = samples.len().min(pending.carry.len());
-                                for s in samples.iter_mut() {
-                                    *s *= fade_out;
-                                }
-                                for (s, inc) in samples.iter_mut().zip(pending.carry.drain(..len)) {
-                                    *s += inc * fade_in;
+                                let mut incoming = pending.carry.drain(..len);
+                                // Equal-power weights (sin/cos of
+                                // pos·π/2), stepped every frame.
+                                for (i, frame) in samples.chunks_mut(ch).enumerate() {
+                                    let pos = (fade_pos + i as f32 * step).clamp(0.0, 1.0);
+                                    let fade_in = (pos * std::f32::consts::FRAC_PI_2).sin();
+                                    let fade_out =
+                                        ((1.0 - pos) * std::f32::consts::FRAC_PI_2).sin();
+                                    for s in frame {
+                                        *s = *s * fade_out
+                                            + incoming.next().unwrap_or(0.0) * fade_in * rg_in;
+                                    }
                                 }
                                 crossfading = true;
                             }
@@ -1485,8 +1515,25 @@ pub fn audio_thread_main_symphonia(
                         }
                     }
                     Ok(None) => {
-                        // End of stream
-                        end_of_stream = true;
+                        // Swap straight away when a matching preload
+                        // takes over this output (gapless). Otherwise
+                        // let the ~0.5 s already queued play out first:
+                        // the EOS handling below drops the output.
+                        let swap_ready = !engine_state.stop_after_current
+                            && engine_state.repeat_mode != RepeatMode::One
+                            && next_pending.as_ref().is_some_and(|p| {
+                                p.player.sample_rate() == state.output.sample_rate()
+                                    && p.player.channels() == state.output.channels()
+                            });
+                        if swap_ready {
+                            end_of_stream = true;
+                        } else {
+                            let ch = state.player.channels();
+                            let mut tail = vec![0.0; limiter.tail_len(ch)];
+                            limiter.process(&mut tail, ch);
+                            state.output.finish(&tail);
+                            state.draining = true;
+                        }
                     }
                     Err(e) => {
                         eprintln!("Decode error: {}", e);
@@ -1647,6 +1694,7 @@ pub fn audio_thread_main_symphonia(
                         (Some(pending), Some(state)) => {
                             state.player = pending.player;
                             state.carry = pending.carry;
+                            state.draining = false;
                             // Gapless swap brings in a new track — refresh
                             // the cached ReplayGain so the next sample batch
                             // is normalized against the new file's tag.
@@ -1694,6 +1742,7 @@ fn load_and_play(path: &Path, device_name: Option<&str>) -> Result<PlaybackState
         output,
         is_paused: false,
         carry: Vec::new(),
+        draining: false,
     })
 }
 

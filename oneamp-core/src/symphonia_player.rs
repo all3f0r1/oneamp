@@ -23,8 +23,10 @@ pub struct SymphoniaPlayer {
     time_base: Option<TimeBase>,
     sample_rate: u32,
     channels: u16,
-    /// Bit depth of lossless integer sources (FLAC, ALAC, PCM). `None`
-    /// for lossy codecs, whose float output never sits on an integer grid.
+    /// Bit depth of lossless integer sources (FLAC, ALAC, PCM) up to 24
+    /// bits — what the f32 chain holds exactly. `None` for lossy codecs,
+    /// whose float output never sits on an integer grid, and for 32-bit
+    /// PCM, which f32 rounds.
     source_bits: Option<u32>,
     /// Current position in seconds (from packet timestamps)
     current_position: f32,
@@ -79,16 +81,17 @@ impl SymphoniaPlayer {
             .as_ref()
             .map(|c| c.count() as u16)
             .unwrap_or(2);
-        let source_bits = params
-            .sample_format
-            .filter(|f| {
-                !matches!(
-                    f,
-                    symphonia::core::audio::sample::SampleFormat::F32
-                        | symphonia::core::audio::sample::SampleFormat::F64
-                )
-            })
-            .and(params.bits_per_sample);
+        // Demuxers set `bits_per_sample` only for integer PCM-style
+        // codecs; FLAC leaves `sample_format` unset, so don't require it.
+        // Above 24 bits the f32 pipeline can't carry every value.
+        let is_float = matches!(
+            params.sample_format,
+            Some(
+                symphonia::core::audio::sample::SampleFormat::F32
+                    | symphonia::core::audio::sample::SampleFormat::F64
+            )
+        );
+        let source_bits = params.bits_per_sample.filter(|&b| !is_float && b <= 24);
 
         let decoder = symphonia::default::get_codecs()
             .make_audio_decoder(&params, &AudioDecoderOptions::default())
@@ -199,5 +202,30 @@ impl SymphoniaPlayer {
     /// Integer bit depth of a lossless source, `None` for lossy.
     pub fn source_bits(&self) -> Option<u32> {
         self.source_bits
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flac_is_recognised_as_exact_16_bit() {
+        // symphonia's FLAC demuxer sets the bit depth but no sample
+        // format; that must still count as an exact integer source.
+        let bytes = include_bytes!("../tests/fixtures/tone16.flac").to_vec();
+        let mut p =
+            SymphoniaPlayer::load_from_source(Box::new(std::io::Cursor::new(bytes)), Some("flac"))
+                .unwrap();
+        assert_eq!(p.source_bits(), Some(16));
+        let mut n = 0;
+        while let Some(samples) = p.decode_next().unwrap() {
+            for s in samples {
+                let v = s * 32768.0;
+                assert_eq!(v, v.round(), "off the 16-bit grid");
+                n += 1;
+            }
+        }
+        assert_eq!(n, 2 * 2205);
     }
 }

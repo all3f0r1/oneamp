@@ -4,6 +4,30 @@ All notable changes to OneAmp are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- The last ~0.5 s of a track is no longer cut when playback stops there
+  (last track, stop after current, repeat one, format change): the queued
+  audio, the limiter's lookahead and the resampler's last partial chunk
+  now play out before the output closes.
+- EQ bands above the source's Nyquist frequency (16 kHz on a 22.05 kHz
+  file) produced an unstable filter; they are now bypassed.
+- FLAC was never treated as bit-exact (symphonia leaves its sample format
+  unset), so integer outputs got TPDF dither at neutral settings.
+- 32-bit integer PCM no longer claims bit-exactness: the f32 pipeline
+  rounds it.
+- Crossfade: the next track is preloaded before the fade starts (was 2 s
+  before the end, whatever the fade length), gains move per frame instead
+  of per packet, and the incoming track gets its own ReplayGain.
+
+### Documentation
+- "Bit-perfect" is scoped to what OneAmp hands the OS: output uses the
+  shared-mode device (WASAPI shared, ALSA default/PipeWire, CoreAudio),
+  so the system mixer may still convert. No exclusive mode yet.
+- Known limitation: multichannel sources on a device with fewer channels
+  keep only the first channels (no downmix).
+
 ## [1.3.0] — 2026-09-26 — The audio quality release
 
 Audiophile audio path: bit-perfect by default, native sample rate, no

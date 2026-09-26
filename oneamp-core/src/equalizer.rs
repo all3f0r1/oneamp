@@ -100,10 +100,18 @@ impl BiquadFilter {
         }
     }
 
+    /// Pass-through `(b0, b1, b2, a1, a2)`. What a band at or above Nyquist
+    /// gets: past ω = π the RBJ formulas flip `sin ω` and yield poles
+    /// outside the unit circle (16 kHz on a 22.05 kHz source blows up).
+    const UNITY: [f64; 5] = [1.0, 0.0, 0.0, 0.0, 0.0];
+
     /// Compute low-shelf coefficients (RBJ cookbook). `S=1` is baked
     /// in — the "max slope at corner" preset gives the gentlest knee
     /// for a loudness-style filter without ringing.
     fn compute_low_shelf(sample_rate: f32, frequency: f32, gain_db: f32) -> [f64; 5] {
+        if frequency >= 0.5 * sample_rate {
+            return Self::UNITY;
+        }
         let (sample_rate, frequency, gain_db) =
             (sample_rate as f64, frequency as f64, gain_db as f64);
         let a = 10_f64.powf(gain_db / 40.0);
@@ -128,6 +136,9 @@ impl BiquadFilter {
 
     /// Compute high-shelf coefficients (RBJ cookbook). Same S=1 default.
     fn compute_high_shelf(sample_rate: f32, frequency: f32, gain_db: f32) -> [f64; 5] {
+        if frequency >= 0.5 * sample_rate {
+            return Self::UNITY;
+        }
         let (sample_rate, frequency, gain_db) =
             (sample_rate as f64, frequency as f64, gain_db as f64);
         let a = 10_f64.powf(gain_db / 40.0);
@@ -219,6 +230,9 @@ impl BiquadFilter {
     /// Compute peaking-EQ coefficients (RBJ cookbook) without touching
     /// state. Returns `(b0, b1, b2, a1, a2)` already normalized by `a0`.
     fn compute_peaking_eq(sample_rate: f32, frequency: f32, gain_db: f32, q: f32) -> [f64; 5] {
+        if frequency >= 0.5 * sample_rate {
+            return Self::UNITY;
+        }
         let (sample_rate, frequency, gain_db, q) = (
             sample_rate as f64,
             frequency as f64,
@@ -1084,6 +1098,28 @@ mod tests {
             assert_eq!(band.b2, band.target_b2);
             assert_eq!(band.a1, band.target_a1);
             assert_eq!(band.a2, band.target_a2);
+        }
+    }
+
+    #[test]
+    fn every_filter_is_stable_at_every_rate() {
+        // Stability triangle for 1 + a1·z⁻¹ + a2·z⁻²: |a2| < 1, |a1| < 1 + a2.
+        for sr in [
+            8_000.0, 11_025.0, 16_000.0, 22_050.0, 32_000.0, 44_100.0, 192_000.0,
+        ] {
+            for gain in [-12.0, 6.0, 12.0] {
+                let mut sets = vec![
+                    BiquadFilter::compute_low_shelf(sr, 120.0, gain),
+                    BiquadFilter::compute_high_shelf(sr, 8_000.0, gain),
+                    BiquadFilter::compute_high_shelf(sr, 16_000.0, gain),
+                ];
+                for f in EQ_FREQUENCIES {
+                    sets.push(BiquadFilter::compute_peaking_eq(sr, f, gain, 1.0));
+                }
+                for [_, _, _, a1, a2] in sets {
+                    assert!(a2.abs() < 1.0 && a1.abs() < 1.0 + a2, "{sr} Hz {gain} dB");
+                }
+            }
         }
     }
 }

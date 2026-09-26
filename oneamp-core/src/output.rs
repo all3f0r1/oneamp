@@ -7,7 +7,9 @@
 //! The stream is opened at the track's native sample rate whenever the
 //! device accepts it, in the most precise sample format it offers, so a
 //! 16-bit FLAC at unity volume with no DSP reaches the device bit for
-//! bit. Only when the device refuses the native rate does a band-limited
+//! bit. "Device" is cpal's shared-mode endpoint (WASAPI shared, ALSA
+//! default / PipeWire, CoreAudio): the OS mixer behind it may still
+//! convert — there is no exclusive mode. Only when the device refuses the native rate does a band-limited
 //! FFT resampler (rubato) kick in — never the linear interpolation rodio
 //! used to apply silently.
 
@@ -34,6 +36,12 @@ const RESAMPLER_CHUNK: usize = 1024;
 /// One-pole smoothing time for volume changes in the callback. Short
 /// enough to feel instant, long enough to avoid zipper noise.
 const VOLUME_SMOOTH_SECS: f32 = 0.005;
+/// Silence queued behind the last real sample by [`AudioOutput::finish`],
+/// so that sample has left the device's own buffer by the time the ring
+/// reads empty and the stream is dropped.
+// ponytail: fixed pad, not the device's real latency (cpal doesn't
+// expose it); raise if some backend buffers more than this.
+const DRAIN_PAD_SECS: f32 = 0.2;
 
 /// Enumerate the output devices of cpal's default host, by name.
 pub fn list_output_devices() -> Vec<String> {
@@ -240,6 +248,9 @@ struct Resample {
     pending: Vec<f32>,
     out: Vec<f32>,
     chunk_out: Vec<f32>,
+    /// Frames fed / produced since the last reset, to size the flush.
+    frames_in: u64,
+    frames_out: u64,
 }
 
 impl Resample {
@@ -260,6 +271,8 @@ impl Resample {
             pending: Vec::new(),
             out: Vec::new(),
             chunk_out,
+            frames_in: 0,
+            frames_out: 0,
         })
     }
 
@@ -271,6 +284,7 @@ impl Resample {
         self.pending.extend_from_slice(input);
         self.out.clear();
         let ch = self.channels;
+        self.frames_in += (input.len() / ch) as u64;
         let mut offset = 0;
         loop {
             let need = self.fft.input_frames_next();
@@ -282,7 +296,10 @@ impl Resample {
                 InterleavedSlice::new(&self.pending[offset..offset + need * ch], ch, need).unwrap();
             let mut outp = InterleavedSlice::new_mut(&mut self.chunk_out, ch, frames_out).unwrap();
             match self.fft.process_into_buffer(&inp, &mut outp, None) {
-                Ok((_, produced)) => self.out.extend_from_slice(&self.chunk_out[..produced * ch]),
+                Ok((_, produced)) => {
+                    self.out.extend_from_slice(&self.chunk_out[..produced * ch]);
+                    self.frames_out += produced as u64;
+                }
                 Err(e) => eprintln!("AudioOutput: resampler error: {e}"),
             }
             offset += need * ch;
@@ -291,15 +308,36 @@ impl Resample {
         &self.out
     }
 
+    /// End of stream: push silence through until every real input frame
+    /// (the partial chunk still pending and the filter's delay) has come
+    /// out, trim the surplus, and reset.
+    fn flush(&mut self) -> Vec<f32> {
+        let target = (self.frames_in as f64 * self.fft.resample_ratio()).round() as u64
+            + self.fft.output_delay() as u64;
+        let silence = vec![0.0; RESAMPLER_CHUNK * self.channels];
+        let mut tail = Vec::new();
+        while self.frames_out < target {
+            tail.extend_from_slice(self.process(&silence));
+        }
+        let surplus = (self.frames_out - target) as usize * self.channels;
+        tail.truncate(tail.len().saturating_sub(surplus));
+        self.reset();
+        tail
+    }
+
     fn reset(&mut self) {
         self.fft.reset();
         self.pending.clear();
+        self.frames_in = 0;
+        self.frames_out = 0;
     }
 }
 
 /// Map interleaved `src_ch` frames onto `dst_ch` device channels: mono is
 /// copied to every channel, otherwise the first channels map 1:1 and any
-/// extra device channels stay silent.
+/// extra device channels stay silent. Known limitation: no downmix —
+/// fewer device channels drop the rest (5.1 on stereo loses C/LFE/S).
+/// Only reached when the device refuses the source channel count.
 fn map_channels(src: &[f32], src_ch: usize, dst_ch: usize, out: &mut Vec<f32>) {
     out.clear();
     for frame in src.chunks_exact(src_ch) {
@@ -310,6 +348,30 @@ fn map_channels(src: &[f32], src_ch: usize, dst_ch: usize, out: &mut Vec<f32>) {
                 (_, None) => 0.0,
             });
         }
+    }
+}
+
+/// Map source-channel frames to the device layout and queue them.
+fn push(
+    producer: &mut HeapProd<f32>,
+    mapped: &mut Vec<f32>,
+    data: &[f32],
+    src_ch: usize,
+    dst_ch: usize,
+) {
+    let data = if src_ch == dst_ch {
+        data
+    } else {
+        map_channels(data, src_ch, dst_ch, mapped);
+        mapped
+    };
+    let pushed = producer.push_slice(data);
+    if pushed < data.len() {
+        eprintln!(
+            "AudioOutput: ring full, dropped {} of {} samples",
+            data.len() - pushed,
+            data.len()
+        );
     }
 }
 
@@ -392,7 +454,7 @@ impl AudioOutput {
             if resampler.is_some() {
                 " (sinc resampling)"
             } else {
-                " (native rate)"
+                " (native rate, before the OS mixer)"
             }
         );
 
@@ -426,20 +488,29 @@ impl AudioOutput {
             Some(r) => r.process(samples),
             None => samples,
         };
-        let data = if src_ch == dst_ch {
-            data
-        } else {
-            map_channels(data, src_ch, dst_ch, &mut self.mapped);
-            &self.mapped
-        };
-        let pushed = self.producer.push_slice(data);
-        if pushed < data.len() {
-            eprintln!(
-                "AudioOutput: ring full, dropped {} of {} samples",
-                data.len() - pushed,
-                data.len()
-            );
+        push(&mut self.producer, &mut self.mapped, data, src_ch, dst_ch);
+    }
+
+    /// End of playback: queue `tail` (the limiter's delay line), flush
+    /// the resampler, then pad with silence. Once
+    /// [`is_drained`](Self::is_drained) the output can be dropped without
+    /// cutting the end of the track.
+    pub fn finish(&mut self, tail: &[f32]) {
+        let src_ch = self.channels.max(1) as usize;
+        let dst_ch = self.device_channels.max(1) as usize;
+        let mut data = tail.to_vec();
+        if let Some(r) = self.resampler.as_mut() {
+            data = r.process(&data).to_vec();
+            data.extend(r.flush());
         }
+        push(&mut self.producer, &mut self.mapped, &data, src_ch, dst_ch);
+        let pad = (self.device_rate as f32 * DRAIN_PAD_SECS) as usize * dst_ch;
+        self.producer.push_iter(std::iter::repeat_n(0.0, pad));
+    }
+
+    /// Everything queued has been handed to the device.
+    pub fn is_drained(&self) -> bool {
+        self.producer.is_empty()
     }
 
     pub fn play(&self) {
@@ -559,5 +630,10 @@ mod tests {
         );
         let peak = out[4000..].iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
         assert!((peak - 0.5).abs() < 0.01, "peak {peak}");
+        // Flush releases the held-back partial chunk and filter delay:
+        // delay + every input frame at the new rate, nothing more.
+        let delay = r.fft.output_delay();
+        out.extend(r.flush());
+        assert_eq!(out.len(), 48_000 + delay);
     }
 }
