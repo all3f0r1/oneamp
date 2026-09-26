@@ -69,6 +69,11 @@
   </screenshots>
 
   <releases>
+    <release version="1.3.0" date="2026-09-26">
+      <description>
+        <p>The audio quality release. Playback goes straight to the sound card at the track's native sample rate, bit-perfect when the equalizer, preamp, ReplayGain and balance are neutral and the volume is at 100 %. A high-quality resampler steps in only when the device can't take the native rate. Gapless playback now trims MP3 and AAC encoder padding, volume above 100 % is limited instead of clipped, crossfades no longer drop audio, and AIFF, CAF and MKA files play.</p>
+      </description>
+    </release>
     <release version="1.2.0" date="2026-09-26">
       <description>
         <p>Playlist editor polish: Winamp-style popup menus with every entry wired (add URL or folder, crop, remove dead files), selection and playlist length in the time field, current track time in the mini display, resizing in Winamp steps. Master volume up to 150 %. Equalizer range is now ±12 dB, matching the skin. Fixes for playlist buttons after resizing and several sprites off by a pixel or two.</p>
