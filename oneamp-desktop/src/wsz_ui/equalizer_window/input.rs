@@ -61,7 +61,9 @@ impl EqualizerWindow {
                     ((mouse_pos.x - vol_rect.min.x) / vol_rect.width()).clamp(0.0, 1.0);
                 self.volume_value = normalized;
                 if let Some(engine) = audio_engine {
-                    let _ = engine.send_command(AudioCommand::SetVolume(normalized));
+                    let _ = engine.send_command(AudioCommand::SetVolume(
+                        normalized * oneamp_core::MAX_VOLUME,
+                    ));
                 }
             }
             Some(ShadeDrag::Balance) => {

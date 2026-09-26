@@ -374,6 +374,10 @@ impl Default for BiquadFilter {
     }
 }
 
+/// Band and preamp gain limit in dB (±12 dB, the range printed on
+/// Winamp's EQ skin).
+pub const EQ_MAX_DB: f32 = 12.0;
+
 /// 10-band graphic equalizer
 #[derive(Debug, Clone)]
 pub struct Equalizer {
@@ -431,10 +435,10 @@ impl Equalizer {
     ///
     /// # Arguments
     /// * `band_index` - Band index (0-9)
-    /// * `gain_db` - Gain in decibels (-20 to +20, matches Winamp's slider range)
+    /// * `gain_db` - Gain in decibels (±[`EQ_MAX_DB`], Winamp's slider range)
     pub fn set_band_gain(&mut self, band_index: usize, gain_db: f32) {
         if band_index < self.gains.len() {
-            self.gains[band_index] = gain_db.clamp(-20.0, 20.0);
+            self.gains[band_index] = gain_db.clamp(-EQ_MAX_DB, EQ_MAX_DB);
             self.update_filter(band_index);
         } else {
             // Out-of-bounds index is a no-op in release builds (we must
@@ -469,7 +473,7 @@ impl Equalizer {
     /// new gain over [`COEF_RAMP_SECS`].
     pub fn set_all_gains(&mut self, gains: &[f32]) {
         for (i, &gain) in gains.iter().enumerate().take(self.gains.len()) {
-            self.gains[i] = gain.clamp(-20.0, 20.0);
+            self.gains[i] = gain.clamp(-EQ_MAX_DB, EQ_MAX_DB);
         }
         self.update_filters();
     }
@@ -706,10 +710,10 @@ mod tests {
     #[test]
     fn test_equalizer_gain_clamping() {
         let mut eq = Equalizer::new(44100.0);
-        eq.set_band_gain(0, 30.0); // Should clamp to +20.0
-        assert_eq!(eq.get_band_gain(0), 20.0);
-        eq.set_band_gain(1, -30.0); // Should clamp to -20.0
-        assert_eq!(eq.get_band_gain(1), -20.0);
+        eq.set_band_gain(0, 30.0); // Should clamp to +EQ_MAX_DB
+        assert_eq!(eq.get_band_gain(0), EQ_MAX_DB);
+        eq.set_band_gain(1, -30.0); // Should clamp to -EQ_MAX_DB
+        assert_eq!(eq.get_band_gain(1), -EQ_MAX_DB);
     }
 
     #[test]

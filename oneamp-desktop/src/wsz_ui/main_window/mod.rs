@@ -608,7 +608,7 @@ impl WszMainWindow {
                     }
                 }
                 AudioEvent::VolumeUpdated(vol, _) if !self.volume_slider.is_dragging => {
-                    self.volume_slider.set_value(*vol);
+                    self.volume_slider.set_value(*vol / oneamp_core::MAX_VOLUME);
                 }
                 AudioEvent::BalanceUpdated(balance) if !self.balance_slider.is_dragging => {
                     self.balance_slider.set_value(*balance);

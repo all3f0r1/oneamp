@@ -122,6 +122,21 @@ impl OneAmpApp {
                     self.start_import(paths, false);
                 }
             }
+            PlaylistAction::AddDir => self.add_folder(),
+            PlaylistAction::OpenFile => self.open_files_replace(),
+            PlaylistAction::TransportPlay => self.transport_play(),
+            PlaylistAction::TransportPause => self.transport_pause(),
+            PlaylistAction::Crop => {
+                let keep = self.playlist.selected_indices().clone();
+                self.remove_where(|i, _| !keep.contains(&i));
+            }
+            PlaylistAction::RemoveDead => {
+                let removed = self.remove_where(|_, e| crate::session::is_unavailable(&e.path));
+                self.push_toast(
+                    format!("Removed {removed} dead file(s)"),
+                    std::time::Duration::from_millis(1500),
+                );
+            }
             PlaylistAction::RemoveSelected => {
                 self.remember_for_undo();
                 // Remove all selected tracks. Iterate descending so each
@@ -200,6 +215,49 @@ impl OneAmpApp {
                     self.start_import(vec![path], false);
                 }
             }
+        }
+    }
+
+    /// Remove every entry matching `pred` (undoable). Returns how many.
+    fn remove_where(&mut self, pred: impl Fn(usize, &PlaylistEntry) -> bool) -> usize {
+        let doomed: Vec<usize> = (0..self.playlist.entries().len())
+            .rev()
+            .filter(|&i| pred(i, &self.playlist.entries()[i]))
+            .collect();
+        if !doomed.is_empty() {
+            self.remember_for_undo();
+            for &idx in &doomed {
+                self.playlist.remove_track(idx);
+            }
+        }
+        doomed.len()
+    }
+
+    /// Winamp's "Play file": the picked files replace the playlist and
+    /// start playing. Ctrl+Z restores the list.
+    pub(super) fn open_files_replace(&mut self) {
+        let exts: Vec<&str> = AUDIO_EXTENSIONS
+            .iter()
+            .copied()
+            .chain(["m3u", "m3u8", "pls"])
+            .collect();
+        if let Some(paths) = rfd::FileDialog::new()
+            .add_filter("Audio and playlists", &exts)
+            .pick_files()
+        {
+            self.remember_for_undo();
+            self.playlist.clear();
+            self.start_import(paths, true);
+        }
+    }
+
+    /// Winamp's "Add folder": append a picked folder's audio files. Reuses
+    /// the drag-drop ingest path (dedupe, start playback when idle);
+    /// `force_play = false` so a folder added mid-playback doesn't
+    /// interrupt the song.
+    pub(super) fn add_folder(&mut self) {
+        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+            self.start_import(vec![folder], false);
         }
     }
 

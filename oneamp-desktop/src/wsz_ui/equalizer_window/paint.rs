@@ -306,7 +306,7 @@ impl EqualizerWindow {
 
         // Sample the per-band gains across SPLINE_W x positions via cubic
         // interpolation (smoother than linear; matches the visual feel of
-        // the Winamp curve). Y-axis: top of strip = +20 dB, bottom = -20 dB.
+        // the Winamp curve). Y-axis: top of strip = +12 dB, bottom = -12 dB.
         let stripe = atlas.extract_region(115, 294, 1, SPLINE_H);
         if let Some(stripe) = stripe {
             for px in 0..SPLINE_W {

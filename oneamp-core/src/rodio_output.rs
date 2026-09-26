@@ -277,10 +277,10 @@ impl RodioOutput {
         self.capacity_samples
     }
 
-    /// Set volume (0.0 to 1.0)
+    /// Set volume (0.0 to `MAX_VOLUME`)
     pub fn set_volume(&self, volume: f32) -> Result<()> {
         if let Ok(sink) = self.sink.lock() {
-            sink.set_volume(volume.clamp(0.0, 1.0));
+            sink.set_volume(volume.clamp(0.0, crate::MAX_VOLUME));
         }
         Ok(())
     }

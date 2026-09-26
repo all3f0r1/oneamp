@@ -6,10 +6,10 @@ use egui::{Context, Pos2, Rect, Vec2};
 use oneamp_core::wsz::skin::{SkinComponent, WszSkin};
 use oneamp_core::{AudioEngine, AudioEvent};
 
-/// Visual + audio range for the equalizer sliders, in decibels. Matches
-/// Winamp's classic ±20 dB slider span (28 fill frames, 1.43 dB step).
-pub const EQ_GAIN_MIN_DB: f32 = -20.0;
-pub const EQ_GAIN_MAX_DB: f32 = 20.0;
+/// Visual + audio range for the equalizer sliders, in decibels: ±12 dB,
+/// as printed on Winamp's EQ skin.
+pub const EQ_GAIN_MIN_DB: f32 = -oneamp_core::EQ_MAX_DB;
+pub const EQ_GAIN_MAX_DB: f32 = oneamp_core::EQ_MAX_DB;
 
 /// Vertical pixel travel for the slider thumb within a 14×63 track. The thumb
 /// is 11 px tall, so the thumb's top can sit anywhere in 0..(63-11)=52 px.
@@ -319,7 +319,7 @@ impl EqualizerWindow {
                 AudioEvent::VolumeUpdated(vol, _)
                     if !matches!(self.shade_drag, Some(ShadeDrag::Volume)) =>
                 {
-                    self.volume_value = vol.clamp(0.0, 1.0);
+                    self.volume_value = (vol / oneamp_core::MAX_VOLUME).clamp(0.0, 1.0);
                 }
                 AudioEvent::BalanceUpdated(bal)
                     if !matches!(self.shade_drag, Some(ShadeDrag::Balance)) =>
@@ -561,7 +561,7 @@ pub(super) struct ShadeRail {
 }
 
 /// Map a dB gain to the thumb's vertical offset within the 14×63 track.
-/// 0 = top (+20 dB), 52 = bottom (−20 dB).
+/// 0 = top (+12 dB), 52 = bottom (−12 dB).
 pub(super) fn db_to_thumb_offset(gain_db: f32) -> u32 {
     let normalized =
         ((gain_db - EQ_GAIN_MIN_DB) / (EQ_GAIN_MAX_DB - EQ_GAIN_MIN_DB)).clamp(0.0, 1.0);
@@ -582,7 +582,8 @@ pub(super) fn thumb_offset_to_db(offset: f32) -> f32 {
 /// 15 px apart starting at x=13.
 ///
 /// Per WSZ_FORMAT.md §eqmain.bmp the frame ordering is least → most
-/// extreme: frame 0 (x=13) is ±1.42 dB and frame 13 (x=208) is ±20 dB.
+/// extreme: frame 0 (x=13) is the smallest non-zero gain and frame 13
+/// (x=208) is ±`EQ_GAIN_MAX_DB`.
 /// The previous version of this function inverted that mapping, which
 /// painted the +15 dB color sprite for a +5 dB gain — making small
 /// boosts look maxed-out and the per-band color palette feel scrambled.
@@ -674,7 +675,7 @@ mod tests {
 
     #[test]
     fn thumb_offset_round_trips() {
-        for db in [-20.0, -10.0, 0.0, 10.0, 20.0] {
+        for db in [-12.0, -6.0, 0.0, 6.0, 12.0] {
             let back = thumb_offset_to_db(db_to_thumb_offset(db) as f32);
             assert!((back - db).abs() < 0.5, "{db} -> {back}");
         }
@@ -684,15 +685,15 @@ mod tests {
     fn band_fill_frame_boundaries() {
         assert!(band_fill_frame(0.0).is_none());
         // Max negative → frame 13 of neg row at (208, 164) per WSZ spec.
-        let (x, y) = band_fill_frame(-20.0).unwrap();
+        let (x, y) = band_fill_frame(EQ_GAIN_MIN_DB).unwrap();
         assert_eq!(y, 164);
         assert_eq!(x, 208);
         // Max positive → frame 13 of pos row at (208, 229).
-        let (x, y) = band_fill_frame(20.0).unwrap();
+        let (x, y) = band_fill_frame(EQ_GAIN_MAX_DB).unwrap();
         assert_eq!(y, 229);
         assert_eq!(x, 208);
-        // Smallest non-zero positive gain (~+1.42 dB) → frame 0 at x=13.
-        let (x, _) = band_fill_frame(1.42).unwrap();
+        // Smallest non-zero positive gain (one 1/14 step) → frame 0 at x=13.
+        let (x, _) = band_fill_frame(EQ_GAIN_MAX_DB / 14.0).unwrap();
         assert_eq!(x, 13);
     }
 

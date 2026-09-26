@@ -25,7 +25,11 @@ pub mod tag_editor;
 pub mod wsz;
 
 pub use audio_capture::AudioCaptureBuffer;
-pub use equalizer::Equalizer;
+/// Highest master volume: 1.5 = 150 % (+3.5 dB). Above 1.0 loud masters
+/// can clip.
+pub const MAX_VOLUME: f32 = 1.5;
+
+pub use equalizer::{EQ_MAX_DB, Equalizer};
 #[cfg(feature = "serialization")]
 pub use equalizer_presets::{BuiltinPresets, EQ_FREQUENCIES, EqualizerPreset, PresetManager};
 pub use playlist::{Playlist, PlaylistEntry, SortOrder};
@@ -121,7 +125,7 @@ pub enum AudioCommand {
     Next,
     /// Play previous track in playlist
     Previous,
-    /// Set volume (0.0 to 1.0)
+    /// Set volume (0.0 to [`MAX_VOLUME`]; 1.0 = unity gain)
     SetVolume(f32),
     /// Set stereo balance (-1.0 = full left, 0.0 = center, 1.0 = full right)
     SetBalance(f32),

@@ -1221,7 +1221,7 @@ pub fn audio_thread_main_symphonia(
                     // Match the band slider range; the EQ window clamps
                     // its visual to [-20, 20] dB. Going further would
                     // just clip the output without giving extra room.
-                    engine_state.preamp_db = db.clamp(-20.0, 20.0);
+                    engine_state.preamp_db = db.clamp(-crate::EQ_MAX_DB, crate::EQ_MAX_DB);
                     let _ =
                         event_tx.send(AudioEvent::EqualizerPreampUpdated(engine_state.preamp_db));
                 }
@@ -1234,7 +1234,7 @@ pub fn audio_thread_main_symphonia(
                     engine_state.crossfade_duration_secs = duration_secs.clamp(0.5, 30.0);
                 }
                 AudioCommand::SetVolume(volume) => {
-                    engine_state.volume = volume.clamp(0.0, 1.0);
+                    engine_state.volume = volume.clamp(0.0, crate::MAX_VOLUME);
                     if let Some(ref mut state) = playback
                         && !engine_state.muted
                     {

@@ -190,7 +190,9 @@ impl WszMainWindow {
             if let Some(volume) = self.volume_slider.handle_drag(mouse_pos, offset, scale)
                 && let Some(engine) = audio_engine
             {
-                let _ = engine.send_command(AudioCommand::SetVolume(volume));
+                // Slider position 0..1 spans 0..MAX_VOLUME.
+                let _ =
+                    engine.send_command(AudioCommand::SetVolume(volume * oneamp_core::MAX_VOLUME));
             }
 
             if let Some(balance) = self.balance_slider.handle_drag(mouse_pos, offset, scale)

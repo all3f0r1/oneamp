@@ -222,8 +222,14 @@ fn remap_filtered_playlist_action(
         other @ (A::None
         | A::Close
         | A::AddFiles
+        | A::AddDir
+        | A::OpenFile
+        | A::TransportPlay
+        | A::TransportPause
         | A::AddUrl
         | A::RemoveSelected
+        | A::Crop
+        | A::RemoveDead
         | A::EditPlaylistFormat
         | A::Clear
         | A::SaveM3u

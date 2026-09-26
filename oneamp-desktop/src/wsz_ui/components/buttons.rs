@@ -68,7 +68,9 @@ impl WinampButton {
                     Self::Eject => 114,
                     _ => unreachable!(),
                 };
+                // Eject is 16 px tall, so its pressed sprite sits at y=16.
                 let y_offset = match state {
+                    ButtonState::Pressed if *self == Self::Eject => 16,
                     ButtonState::Pressed => 18,
                     _ => 0,
                 };

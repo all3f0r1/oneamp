@@ -260,7 +260,9 @@ impl ShadeWindow {
                 self.volume_slider.value = local_x / vol_rect.width();
 
                 if let Some(engine) = audio_engine {
-                    let _ = engine.send_command(AudioCommand::SetVolume(self.volume_slider.value));
+                    let _ = engine.send_command(AudioCommand::SetVolume(
+                        self.volume_slider.value * oneamp_core::MAX_VOLUME,
+                    ));
                 }
             }
 
@@ -307,7 +309,7 @@ impl ShadeWindow {
                     self.display.set_time(*current, *total);
                 }
                 AudioEvent::VolumeUpdated(vol, _) if !self.volume_slider.is_dragging => {
-                    self.volume_slider.set_value(*vol);
+                    self.volume_slider.set_value(*vol / oneamp_core::MAX_VOLUME);
                 }
                 _ => {}
             }

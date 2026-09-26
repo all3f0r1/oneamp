@@ -5,7 +5,7 @@ use super::renderer::WszRenderer;
 use crate::app::WSZ_PLEDIT_FONT_FAMILY;
 use egui::{Color32, Context, Pos2, Rect, Vec2};
 use oneamp_core::PlaylistEntry;
-use oneamp_core::wsz::skin::{SkinComponent, WszSkin};
+use oneamp_core::wsz::skin::WszSkin;
 use oneamp_core::{AudioEngine, AudioEvent};
 
 /// Pick the FontId for playlist text. When the skin shipped a TTF in its
@@ -39,12 +39,25 @@ pub enum PlaylistAction {
     RangeSelectTrack(usize),
     PlayTrack(usize),
     AddFiles,
+    /// ADD → DIR: pick a folder and append its audio files.
+    AddDir,
+    /// Mini-transport eject: Winamp's "Play file" (replace + play),
+    /// same as the main window's eject.
+    OpenFile,
+    /// Mini-transport play: Winamp `X` semantics (start / resume / restart).
+    TransportPlay,
+    /// Mini-transport pause: toggles pause, no-op when stopped.
+    TransportPause,
     /// User picked "Add URL…" from a menu (clutterbar or playlist
     /// context menu). The app spawns a small dialog that asks for an
     /// HTTP(S) URL and either appends the stream to the playlist or
     /// starts playing it directly.
     AddUrl,
     RemoveSelected,
+    /// REM → CROP: remove every entry that is *not* selected.
+    Crop,
+    /// REM → MISC: remove entries whose file no longer exists.
+    RemoveDead,
     /// Remove exactly one row, regardless of the current selection
     /// state. Emitted by the right-click "Remove from playlist" entry
     /// so the user doesn't have to also click the row first.
@@ -86,7 +99,17 @@ pub enum PlaylistAction {
 pub(super) const PL_WIDTH: u32 = 275;
 pub const PL_DEFAULT_HEIGHT: u32 = 232;
 pub(super) const PL_MIN_HEIGHT: u32 = 116;
-pub(super) const PL_MAX_HEIGHT: u32 = 800;
+/// Winamp resizes the playlist in steps of the 29-px side tile, so the
+/// side fillers never end on a clipped tile.
+pub(super) const PL_HEIGHT_STEP: u32 = 29;
+pub(super) const PL_MAX_HEIGHT: u32 = PL_MIN_HEIGHT + 23 * PL_HEIGHT_STEP;
+
+/// Clamp `h` to the allowed range and round it to the nearest step.
+pub(super) fn snap_height(h: i32) -> u32 {
+    let steps = ((h - PL_MIN_HEIGHT as i32) as f32 / PL_HEIGHT_STEP as f32).round();
+    (PL_MIN_HEIGHT as i32 + steps as i32 * PL_HEIGHT_STEP as i32)
+        .clamp(PL_MIN_HEIGHT as i32, PL_MAX_HEIGHT as i32) as u32
+}
 
 /// Title bar height (cornerpieces + tile).
 pub(super) const TITLE_H: u32 = 20;
@@ -99,65 +122,57 @@ pub(super) const RIGHT_W: u32 = 20;
 /// Skin-space height of one playlist row.
 pub(super) const ROW_H_SKIN: u32 = 11;
 
-/// Description of a parent button: where it sits, and whether/how its
-/// submenu unfolds.
+/// Submenu row height, and the atlas y of each row's sprite (19-px pitch:
+/// 18 px of sprite + 1 px gap).
+pub(super) const SUB_H: u32 = 18;
+pub(super) const SUB_ATLAS_Y: [u32; 4] = [111, 130, 149, 168];
+
+/// A parent button (ADD/REM/SEL/MISC/LIST) and the popup it unfolds.
+///
+/// Winamp layout: the popup's bottom row covers the parent button itself
+/// and the rows stack upwards; a 3-px bar sits on the left, over the
+/// button's left bevel. Normal sprites live at `atlas_x`, hovered ones at
+/// `atlas_x + 23`, the bar at `bar_x` (height = rows × 18).
 pub(super) struct ParentSpec {
-    /// Skin-space x of the button (y is fixed at 202).
+    /// Skin-space x of the button body (y follows the bottom bar, see
+    /// `buttons_y`).
     pub(super) skin_x: u32,
-    /// Direct action when no submenu is configured (kept for parity with the
-    /// pre-submenu wiring: SEL/MISC have no submenu yet, so a plain click
-    /// still does something useful).
-    pub(super) fallback: Option<PlaylistAction>,
-    /// Atlas x of the submenu's column of sub-button sprites (each 22×18,
-    /// stacked at atlas y=111, 130, 149).
-    pub(super) submenu_atlas_x: Option<u32>,
-    /// Atlas x of the column's 3×54 decoration bar (cosmetic vertical strip
-    /// painted to the right of the unfolded sub-buttons). The bar at
-    /// atlas y=111 spans all three sub-rows and visually links them into a
-    /// single popup. Per `WSZ_FORMAT.md` §pledit.bmp.
-    pub(super) decoration_atlas_x: Option<u32>,
-    /// Actions to dispatch when the user clicks each row of the submenu
-    /// (top → bottom). `None` slots are no-ops.
-    pub(super) submenu_actions: [Option<PlaylistAction>; 3],
+    pub(super) atlas_x: u32,
+    pub(super) bar_x: u32,
+    /// One action per row, top → bottom. `None` rows render but do nothing.
+    pub(super) actions: &'static [Option<PlaylistAction>],
 }
 
-/// Static layout for the 5 parent buttons (ADD/REM/SEL/MISC/LIST) along the
-/// bottom row. Positions match `pledit.bmp`'s baked-in sprites at atlas
-/// y=80; SEL and MISC have no submenu wired yet so they don't unfold.
 pub(super) const PARENTS: [ParentSpec; 5] = [
     ParentSpec {
         skin_x: 14,
-        fallback: None,
-        submenu_atlas_x: Some(0),
-        decoration_atlas_x: Some(48),
-        submenu_actions: [
-            // URL → DIR → FILE. None of these distinguish in the v1 file
-            // dialog, so all map to AddFiles. URL/DIR support comes later.
-            Some(PlaylistAction::AddFiles),
-            Some(PlaylistAction::AddFiles),
+        atlas_x: 0,
+        bar_x: 48,
+        // URL / DIR / FILE
+        actions: &[
+            Some(PlaylistAction::AddUrl),
+            Some(PlaylistAction::AddDir),
             Some(PlaylistAction::AddFiles),
         ],
     },
     ParentSpec {
         skin_x: 43,
-        fallback: None,
-        submenu_atlas_x: Some(54),
-        decoration_atlas_x: Some(100),
-        submenu_actions: [
-            // All (Remove all) → CROP (Remove all but selected — not impl)
-            // → FILE (Remove selected).
+        atlas_x: 54,
+        bar_x: 100,
+        // ALL / CROP / SEL / MISC (Winamp's MISC menu → remove dead files)
+        actions: &[
             Some(PlaylistAction::Clear),
-            None,
+            Some(PlaylistAction::Crop),
             Some(PlaylistAction::RemoveSelected),
+            Some(PlaylistAction::RemoveDead),
         ],
     },
     ParentSpec {
         skin_x: 72,
-        fallback: None,
-        // SEL → INV / NONE / ALL.
-        submenu_atlas_x: Some(104),
-        decoration_atlas_x: Some(150),
-        submenu_actions: [
+        atlas_x: 104,
+        bar_x: 150,
+        // INV / ZERO / ALL
+        actions: &[
             Some(PlaylistAction::InvertSelection),
             Some(PlaylistAction::SelectNone),
             Some(PlaylistAction::SelectAll),
@@ -165,21 +180,17 @@ pub(super) const PARENTS: [ParentSpec; 5] = [
     },
     ParentSpec {
         skin_x: 101,
-        fallback: None,
-        // MISC → SORT / FILE INF / MISC OPTS. Only SORT is wired —
-        // FILE INF + MISC OPTS leave the click as a no-op until a
-        // dialog surface is built.
-        submenu_atlas_x: Some(154),
-        decoration_atlas_x: Some(200),
-        submenu_actions: [Some(PlaylistAction::SortByTitle), None, None],
+        atlas_x: 154,
+        bar_x: 200,
+        // SORT / FILE INF / MISC OPTS — the last two have no dialog yet.
+        actions: &[Some(PlaylistAction::SortByTitle), None, None],
     },
     ParentSpec {
-        skin_x: 232,
-        fallback: None,
-        submenu_atlas_x: Some(204),
-        decoration_atlas_x: Some(250),
-        submenu_actions: [
-            // NEW (clear list) → SAVE → LOAD.
+        skin_x: 231,
+        atlas_x: 204,
+        bar_x: 250,
+        // NEW / SAVE / LOAD
+        actions: &[
             Some(PlaylistAction::Clear),
             Some(PlaylistAction::SaveM3u),
             Some(PlaylistAction::LoadM3u),
@@ -251,10 +262,12 @@ pub struct PlaylistWindow {
     pub(super) renderer: WszRenderer,
     /// Vertical scroll offset in pixels (screen space, not skin).
     pub(super) scroll_offset: f32,
-    /// Pressed-state index of the parent button under the pointer (visual).
-    pub(super) pressed_button: Option<usize>,
     /// Currently unfolded submenu (None = closed).
     pub(super) open_submenu: Option<usize>,
+    /// False while the press that opened the submenu is still held: its
+    /// release over the bottom row (= the parent button) keeps the popup
+    /// open instead of firing that row, so a plain click just unfolds it.
+    pub(super) submenu_armed: bool,
     /// True while the user holds the close button.
     pub(super) close_pressed: bool,
     /// Currently dragged sub-state. Shared so we don't double-process drags.
@@ -268,10 +281,6 @@ pub struct PlaylistWindow {
     /// Dynamic playlist height in skin space. Updated by the resize handle;
     /// queried by the coordinator to size the OS viewport.
     pub(super) height_skin: u32,
-    /// When true, the window collapses to its 14-px shade strip drawn from
-    /// `pledit.bmp` y=42 cornerpieces. Toggled by double-clicking the
-    /// title bar — same gesture the main window uses.
-    pub(super) shade_mode: bool,
     /// Latest playback time (seconds) — fed by `update(events)`. Drives the
     /// mini-transport time digits.
     pub(super) current_time_secs: f32,
@@ -279,6 +288,8 @@ pub struct PlaylistWindow {
     /// the duration is unknown (e.g., streaming source); the mini-transport
     /// degrades to elapsed-only in that case.
     pub(super) current_total_secs: Option<f32>,
+    /// Nothing playing: the mini time field stays blank, like Winamp.
+    pub(super) stopped: bool,
     pub(super) mouse_was_pressed: bool,
     /// Soft-focus flag pushed in by the coordinator. Drives the active vs
     /// inactive cornerpiece/title-tile extracts from `pledit.bmp`.
@@ -311,15 +322,15 @@ impl PlaylistWindow {
         Self {
             renderer: WszRenderer::new(skin, scale),
             scroll_offset: 0.0,
-            pressed_button: None,
             open_submenu: None,
+            submenu_armed: false,
             close_pressed: false,
             drag: None,
             row_drag: None,
             height_skin: PL_DEFAULT_HEIGHT,
-            shade_mode: false,
             current_time_secs: 0.0,
             current_total_secs: None,
+            stopped: true,
             mouse_was_pressed: false,
             focused: false,
             ensure_visible: None,
@@ -339,6 +350,7 @@ impl PlaylistWindow {
         for event in events {
             match event {
                 AudioEvent::Position(current, total) => {
+                    self.stopped = false;
                     self.current_time_secs = *current;
                     // `total` is sent as 0.0 when unknown (streams, ICY, …);
                     // fold that to None so the mini-transport falls back to
@@ -352,30 +364,25 @@ impl PlaylistWindow {
                 AudioEvent::TrackLoaded(track) => {
                     self.current_total_secs = track.duration_secs;
                 }
+                AudioEvent::Stopped => self.stopped = true,
                 _ => {}
             }
         }
     }
 
     /// Skin-space height the window currently occupies. Coordinator queries
-    /// this each frame to compute the OS viewport size. In shade mode the
-    /// window collapses to its 14-px title strip regardless of the
-    /// resize-handle setting.
+    /// this each frame to compute the OS viewport size.
     pub fn height_skin(&self) -> u32 {
-        if self.shade_mode {
-            14
-        } else {
-            self.height_skin
-        }
+        self.height_skin
     }
 
-    /// Resize-handle height, ignoring shade. Persisted across launches.
+    /// Resize-handle height. Persisted across launches.
     pub fn full_height_skin(&self) -> u32 {
         self.height_skin
     }
 
     pub fn set_full_height_skin(&mut self, h: u32) {
-        self.height_skin = h.clamp(PL_MIN_HEIGHT, PL_MAX_HEIGHT);
+        self.height_skin = snap_height(h as i32);
     }
 
     /// Render the playlist as a docked area inside the main viewport at
@@ -392,10 +399,6 @@ impl PlaylistWindow {
         queued: &[Option<usize>],
         display_format: &str,
     ) -> PlaylistAction {
-        if self.shade_mode {
-            return self.show_shade(ctx, dock_y_skin);
-        }
-
         let scale = self.renderer.get_scale();
         let window_size = Vec2::new(PL_WIDTH as f32 * scale, self.height_skin as f32 * scale);
 
@@ -452,107 +455,12 @@ impl PlaylistWindow {
                     action = row_action;
                 }
                 self.render_scrollbar_thumb(ui, offset, entries.len());
-                self.render_mini_time(ui, offset);
+                self.render_mini_time(ui, offset, entries, selected);
                 self.render_submenu(ui, offset);
 
                 let btn_action = self.handle_input(ui, offset, audio_engine, entries.len());
                 if btn_action != PlaylistAction::None {
                     action = btn_action;
-                }
-            });
-
-        action
-    }
-
-    /// Shade-mode rendering: 14-px title strip drawn from `pledit.bmp`
-    /// y=42 cornerpieces (left + right) plus a tiled middle band. Other
-    /// chrome is hidden. Double-click anywhere on the strip toggles back
-    /// to full mode.
-    fn show_shade(&mut self, ctx: &Context, dock_y_skin: u32) -> PlaylistAction {
-        let scale = self.renderer.get_scale();
-        let strip_size = Vec2::new(PL_WIDTH as f32 * scale, 14.0 * scale);
-
-        let mut action = PlaylistAction::None;
-
-        egui::Area::new(egui::Id::new("wsz_playlist_window"))
-            .fixed_pos(Pos2::new(0.0, dock_y_skin as f32 * scale))
-            .order(egui::Order::Middle)
-            .show(ctx, |ui| {
-                ui.set_min_size(strip_size);
-                ui.set_max_size(strip_size);
-                let area_rect = ui.max_rect();
-                let offset = area_rect.min;
-
-                // Background fill so the strip is visible even on skins
-                // missing the y=42 cornerpieces.
-                ui.painter().rect_filled(
-                    Rect::from_min_size(offset, strip_size),
-                    0.0,
-                    self.pledit_color(|c| c.normal_bg),
-                );
-
-                if let Some(atlas) = self
-                    .renderer
-                    .get_skin()
-                    .get_bitmap(&SkinComponent::Pledit)
-                    .cloned()
-                {
-                    // Left cornerpiece 25×14 from y=42
-                    if let Some(piece) = atlas.extract_region(0, 42, 25, 14) {
-                        let pos = self.renderer.skin_to_screen(0, 0, offset);
-                        self.renderer.render_region(ui, &piece, pos, "pl_shade_tl");
-                    }
-                    // Right cornerpiece 25×14 from y=42
-                    if let Some(piece) = atlas.extract_region(153, 42, 25, 14) {
-                        let pos = self.renderer.skin_to_screen(PL_WIDTH - 25, 0, offset);
-                        self.renderer.render_region(ui, &piece, pos, "pl_shade_tr");
-                    }
-                    // Middle tile — 100×14 segment from (26,42), tiled
-                    // across the gap between the two cornerpieces. The
-                    // last copy is clipped so we don't overshoot.
-                    if let Some(tile) = atlas.extract_region(26, 42, 100, 14) {
-                        let mut x = 25u32;
-                        while x < PL_WIDTH - 25 {
-                            let span = (PL_WIDTH - 25 - x).min(100);
-                            let region = if span == 100 {
-                                tile.clone()
-                            } else {
-                                match atlas.extract_region(26, 42, span, 14) {
-                                    Some(r) => r,
-                                    None => break,
-                                }
-                            };
-                            let pos = self.renderer.skin_to_screen(x, 0, offset);
-                            self.renderer.render_region(
-                                ui,
-                                &region,
-                                pos,
-                                &format!("pl_shade_mid_{x}"),
-                            );
-                            x += 100;
-                        }
-                    }
-                }
-
-                let response = ui.interact(
-                    Rect::from_min_size(offset, strip_size),
-                    egui::Id::new("pl_shade_strip_click"),
-                    egui::Sense::click(),
-                );
-                if response.double_clicked() {
-                    self.shade_mode = false;
-                }
-                if response.clicked()
-                    && let Some(pos) = ui.ctx().pointer_latest_pos()
-                {
-                    // Close button at (264, 3, 9, 9) skin space —
-                    // same coords as full-mode close.
-                    let close_pos = self.renderer.skin_to_screen(264, 3, offset);
-                    let close_rect =
-                        Rect::from_min_size(close_pos, Vec2::new(9.0 * scale, 9.0 * scale));
-                    if close_rect.contains(pos) {
-                        action = PlaylistAction::Close;
-                    }
                 }
             });
 
@@ -572,6 +480,25 @@ impl PlaylistWindow {
     }
     pub(super) fn body_bot(&self) -> u32 {
         self.height_skin - BOTTOM_H
+    }
+    /// Skin rect of submenu row `row` of the open popup.
+    pub(super) fn submenu_row_rect(&self, offset: Pos2, idx: usize, row: usize) -> Rect {
+        let n = PARENTS[idx].actions.len() as u32;
+        let y = self.buttons_y() + SUB_H - (n - row as u32) * SUB_H;
+        skin_rect(&self.renderer, offset, PARENTS[idx].skin_x, y, 22, SUB_H)
+    }
+
+    /// Row of the open submenu under `pos`, if any.
+    pub(super) fn submenu_row_at(&self, pos: Pos2, offset: Pos2) -> Option<usize> {
+        let idx = self.open_submenu?;
+        (0..PARENTS[idx].actions.len())
+            .find(|&r| self.submenu_row_rect(offset, idx, r).contains(pos))
+    }
+
+    /// Skin-space y of the ADD/REM/SEL/MISC/LIST buttons: 8 px into the
+    /// bottom bar, so they follow the bar when the window is resized.
+    pub(super) fn buttons_y(&self) -> u32 {
+        self.body_bot() + 8
     }
 }
 

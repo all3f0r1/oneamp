@@ -1,6 +1,6 @@
 use super::{
     BOTTOM_H, DragKind, LEFT_W, PARENTS, PL_WIDTH, PlaylistAction, PlaylistWindow, RIGHT_W,
-    ROW_H_SKIN, TITLE_H, pledit_font_id,
+    ROW_H_SKIN, SUB_ATLAS_Y, SUB_H, TITLE_H, pledit_font_id,
 };
 use crate::wsz_ui::components::bitmap_font;
 use egui::{Pos2, Rect, Sense, Vec2};
@@ -148,29 +148,6 @@ impl PlaylistWindow {
             self.renderer
                 .render_region(ui, &reg, pos, "pl_close_pressed");
         }
-
-        // ---- Parent button pressed-state overlay -------------------------
-        // pledit.bmp ships ADD/REM/SEL/MISC/LIST as unpressed-only sprites
-        // baked into the bottom-bar extracts above. Real Winamp paints a
-        // darker tint on top of the pressed button so the user gets click
-        // feedback; we reproduce that with a translucent dark rectangle
-        // since there's no dedicated pressed sprite to overlay. Also
-        // visually anchors the button while its submenu is unfolded.
-        //
-        // The baked button artwork includes a 3-px left bevel that sits
-        // *outside* the spec's `(skin_x, w=22)` body rect. A 22-wide
-        // overlay would leave that bevel un-darkened and create a stray
-        // bright column at the button's left edge while it's pressed —
-        // widen the overlay to 25 px starting at `skin_x - 3` so the
-        // bevel dims with the body.
-        let pressed_idx = self.pressed_button.or(self.open_submenu);
-        if let Some(idx) = pressed_idx {
-            let parent = &PARENTS[idx];
-            let overlay_x = parent.skin_x.saturating_sub(3);
-            let rect = super::skin_rect(&self.renderer, offset, overlay_x, 202, 25, 18);
-            ui.painter()
-                .rect_filled(rect, 0.0, egui::Color32::from_black_alpha(80));
-        }
     }
 
     /// Stamp `region` repeatedly along the X axis from `x0` to `x1`. The
@@ -299,6 +276,11 @@ impl PlaylistWindow {
         let end_index = (start_index + visible_rows).min(entries.len());
 
         let mut action = PlaylistAction::None;
+        // Rows under the open popup must not react to its clicks.
+        let over_menu = ui
+            .ctx()
+            .pointer_latest_pos()
+            .is_some_and(|p| self.submenu_row_at(p, offset).is_some());
 
         for (i, entry) in entries[start_index..end_index].iter().enumerate() {
             let actual_idx = start_index + i;
@@ -387,11 +369,12 @@ impl PlaylistWindow {
                 ui.painter().galley(row_left, galley, row_color);
             }
 
-            let response = ui.interact(
-                row_rect,
-                egui::Id::new(("pl_row", actual_idx)),
-                Sense::click_and_drag(),
-            );
+            let sense = if over_menu {
+                Sense::hover()
+            } else {
+                Sense::click_and_drag()
+            };
+            let response = ui.interact(row_rect, egui::Id::new(("pl_row", actual_idx)), sense);
             if response.drag_started() {
                 self.row_drag = Some(actual_idx);
             }
@@ -521,7 +504,7 @@ impl PlaylistWindow {
         let thumb_y_skin = body_top + (normalized * travel as f32) as u32;
 
         let pressed = matches!(self.drag, Some(DragKind::Scrollbar { .. }));
-        let sprite_x = if pressed { 62 } else { 52 };
+        let sprite_x = if pressed { 61 } else { 52 };
         if let Some(thumb) = atlas.extract_region(sprite_x, 53, 8, thumb_h_skin) {
             let pos = self
                 .renderer
@@ -531,113 +514,128 @@ impl PlaylistWindow {
         }
     }
 
-    /// Paint the playlist's "Time status display" (90 px wide, atlas
-    /// y=82), rendered through the WSZ `text.bmp` glyph atlas — same
-    /// typography as the title scroller and KBPS readout. Format follows
-    /// Winamp: `M:SS/M:SS` (elapsed/total, no leading zero on minutes)
-    /// when the track length is known, otherwise just `M:SS` elapsed.
+    /// Paint the two time fields of the bottom-right bar with the WSZ
+    /// `text.bmp` glyphs, like Winamp:
+    /// - upper field (x=133, bar+10): running time of the selection / of
+    ///   the whole list, `+` appended when some lengths are unknown;
+    /// - lower field (bar+23): elapsed time of the current track, minutes
+    ///   right-aligned before and seconds after the colon baked into
+    ///   `pledit.bmp` at x=208. Blank when stopped.
     ///
-    /// Falls back to the playlist font when the atlas is missing or
-    /// undersized; the bitmap path silently no-ops there rather than
-    /// painting nothing.
-    ///
-    /// We deliberately render in the y=82 status zone, NOT the mini-
-    /// transport's y=95 digit slot. Both are real fields in pledit.bmp,
-    /// but Winamp itself uses y=82 for the active time readout — that's
-    /// the visible "0:00/9:24" in screenshots; y=95 is a separate, much
-    /// smaller pair of slots that stay blank in stock skins.
-    pub(super) fn render_mini_time(&mut self, ui: &mut egui::Ui, offset: Pos2) {
-        let scale = self.renderer.get_scale();
-        let fmt = |secs: f32| -> String {
-            let s = secs.max(0.0) as u32;
-            let mm = (s / 60).min(999);
-            let ss = s % 60;
-            format!("{}:{:02}", mm, ss)
-        };
-        let elapsed = fmt(self.current_time_secs);
-        let text = match self.current_total_secs {
-            Some(total) => format!("{}/{}", elapsed, fmt(total)),
-            None => elapsed,
-        };
-        let pos = self
-            .renderer
-            .skin_to_screen(133, self.body_bot() + (82 - 72), offset);
-        if bitmap_font::render_text(&mut self.renderer, ui, &text, pos).is_none() {
+    /// Falls back to the playlist font when the atlas is missing.
+    pub(super) fn render_mini_time(
+        &mut self,
+        ui: &mut egui::Ui,
+        offset: Pos2,
+        entries: &[PlaylistEntry],
+        selected: &std::collections::BTreeSet<usize>,
+    ) {
+        let (mut sel, mut total, mut unknown) = (0.0f32, 0.0f32, false);
+        for (i, e) in entries.iter().enumerate() {
+            match e.duration {
+                Some(d) => {
+                    total += d;
+                    if selected.contains(&i) {
+                        sel += d;
+                    }
+                }
+                None => unknown = true,
+            }
+        }
+        let plus = if unknown { "+" } else { "" };
+        let running = format!("{}/{}{plus}", fmt_hms(sel), fmt_hms(total));
+        let bar = self.body_bot();
+        self.paint_text(ui, offset, &running, 133, bar + 10);
+
+        if !self.stopped {
+            let s = self.current_time_secs.max(0.0) as u32;
+            let mins = (s / 60).min(99).to_string();
+            let x = 208 - 5 * mins.len() as u32;
+            self.paint_text(ui, offset, &mins, x, bar + 23);
+            self.paint_text(ui, offset, &format!("{:02}", s % 60), 211, bar + 23);
+        }
+    }
+
+    fn paint_text(&mut self, ui: &mut egui::Ui, offset: Pos2, text: &str, x: u32, y: u32) {
+        let pos = self.renderer.skin_to_screen(x, y, offset);
+        if bitmap_font::render_text(&mut self.renderer, ui, text, pos).is_none() {
             ui.painter().text(
                 pos,
                 egui::Align2::LEFT_TOP,
                 text,
-                pledit_font_id(self.renderer.get_skin(), 7.0 * scale),
+                pledit_font_id(self.renderer.get_skin(), 7.0 * self.renderer.get_scale()),
                 self.pledit_color(|c| c.normal),
             );
         }
     }
 
-    /// Render the open submenu (3 stacked sub-buttons above the parent).
+    /// Render the open submenu: rows stacked upwards from the parent button
+    /// (bottom row covers it), hovered row in its pressed sprite, 3-px bar
+    /// on the left over the button's bevel.
     pub(super) fn render_submenu(&mut self, ui: &mut egui::Ui, offset: Pos2) {
         let Some(idx) = self.open_submenu else {
             return;
         };
-        let parent = &PARENTS[idx];
-        let Some(atlas_x) = parent.submenu_atlas_x else {
-            return;
-        };
-
-        let atlas = match self
+        let Some(atlas) = self
             .renderer
             .get_skin()
             .get_bitmap(&SkinComponent::Pledit)
             .cloned()
-        {
-            Some(a) => a,
-            None => return,
+        else {
+            return;
         };
+        let parent = &PARENTS[idx];
+        let rows = parent.actions.len();
+        let hovered = ui
+            .ctx()
+            .pointer_latest_pos()
+            .and_then(|p| self.submenu_row_at(p, offset));
 
-        let parent_y: u32 = 202;
-        let sub_h: u32 = 18;
-        let dst_top = parent_y - 3 * sub_h;
-        // The parent button is at (skin_x, parent_y); 3 sub-buttons stack
-        // *above* it (indices 0..3 going down), so the topmost sub-button
-        // sits at parent_y - 3 * sub_h.
-        //
-        // The parent button artwork baked into the bottom-bar extract
-        // carries a 3-px left bevel that sits *outside* the spec's
-        // `(skin_x, w=22)` body rect. Sub-menu sprites at (atlas_x, …) are
-        // 22 px wide and have no equivalent bevel: drawn at `parent.skin_x`
-        // they expose the parent's bevel as a stray column to their left
-        // and look shifted right relative to the parent. Shifting the dst
-        // by `-SUBMENU_BEVEL_X_SHIFT` overdraws the bevel so the column
-        // disappears.
-        const SUBMENU_BEVEL_X_SHIFT: u32 = 3;
-        let dst_x = parent.skin_x.saturating_sub(SUBMENU_BEVEL_X_SHIFT);
-
-        let atlas_ys = [111u32, 130u32, 149u32];
-        for (row, atlas_y) in atlas_ys.iter().enumerate() {
-            let dst_y = parent_y - (3 - row as u32) * sub_h;
-            // Rows whose sub-action is unwired still render the sprite so
-            // the popup looks like Winamp's; the click path returns None
-            // for them, which means the button is visible but inert.
-            if let Some(region) = atlas.extract_region(atlas_x, *atlas_y, 22, sub_h) {
-                let pos = self.renderer.skin_to_screen(dst_x, dst_y, offset);
+        for (row, atlas_y) in SUB_ATLAS_Y.iter().take(rows).enumerate() {
+            let hot = hovered == Some(row);
+            let atlas_x = parent.atlas_x + if hot { 23 } else { 0 };
+            if let Some(region) = atlas.extract_region(atlas_x, *atlas_y, 22, SUB_H) {
+                let pos = self.submenu_row_rect(offset, idx, row).min;
                 self.renderer
-                    .render_region(ui, &region, pos, &format!("pl_sub_{}_{}", idx, row));
+                    .render_region(ui, &region, pos, &format!("pl_sub_{idx}_{row}_{hot}"));
             }
         }
 
-        // Decoration bar: 3×54 cosmetic strip painted at the right edge of
-        // the unfolded column. Sourced from the column's slot in pledit.bmp
-        // at y=111 (the bar continues across all three sub-rows in the
-        // atlas, so a single 3×54 extract covers the whole popup height).
-        // Without this the unfolded popup looks like floating loose buttons
-        // instead of the framed widget Winamp shows. Anchored to the
-        // shifted sub-button column so the popup keeps a single visual
-        // alignment line.
-        if let Some(deco_x) = parent.decoration_atlas_x
-            && let Some(region) = atlas.extract_region(deco_x, 111, 3, 54)
-        {
-            let pos = self.renderer.skin_to_screen(dst_x + 22, dst_top, offset);
+        if let Some(region) = atlas.extract_region(parent.bar_x, 111, 3, rows as u32 * SUB_H) {
+            let top = self.submenu_row_rect(offset, idx, 0).min;
+            let pos = Pos2::new(top.x - 3.0 * self.renderer.get_scale(), top.y);
             self.renderer
-                .render_region(ui, &region, pos, &format!("pl_sub_deco_{}", idx));
+                .render_region(ui, &region, pos, &format!("pl_sub_bar_{idx}"));
         }
+    }
+}
+
+/// `M:SS`, or `H:MM:SS` past an hour.
+fn fmt_hms(secs: f32) -> String {
+    let s = secs.max(0.0) as u32;
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn fmt_hms_formats() {
+        assert_eq!(super::fmt_hms(0.0), "0:00");
+        assert_eq!(super::fmt_hms(125.9), "2:05");
+        assert_eq!(super::fmt_hms(3725.0), "1:02:05");
+    }
+
+    #[test]
+    fn snap_height_steps() {
+        use super::super::{PL_MAX_HEIGHT, snap_height};
+        assert_eq!(snap_height(0), 116);
+        assert_eq!(snap_height(232), 232);
+        assert_eq!(snap_height(245), 232);
+        assert_eq!(snap_height(247), 261);
+        assert_eq!(snap_height(10_000), PL_MAX_HEIGHT);
     }
 }

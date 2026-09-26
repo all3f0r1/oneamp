@@ -7,9 +7,9 @@
 //! - 11 bytes of EQ data: `[preamp, band_0, band_1, ..., band_9]`.
 //!
 //! Each byte encodes a gain in dB on a roughly 0.635 dB step:
-//! `byte = round((1 - (gain + 20) / 40) * 63)` (so 0 = +20 dB, 63 = -20 dB,
-//! 32 ≈ 0 dB). Anything beyond ±20 dB is clamped — Winamp's own UI ranges
-//! over the same span so this isn't a lossy reduction in practice.
+//! `byte = round((1 - (gain + 12) / 24) * 63)` (so 0 = +12 dB, 63 = -12 dB,
+//! 32 ≈ 0 dB): the byte spans the slider, which Winamp labels ±12 dB.
+//! Anything beyond is clamped.
 //!
 //! Files written here always contain a single preset (Winamp itself
 //! supports multi-preset libraries, but our writer doesn't need to). The
@@ -41,18 +41,19 @@ pub struct EqfPreset {
     pub bands: [f32; 10],
 }
 
-/// Convert dB ∈ [-20, +20] to the byte Winamp writes. Saturates outside the
-/// range — `.eqf` can't represent gains beyond ±20 dB.
+/// Convert dB ∈ ±`EQ_MAX_DB` to the byte Winamp writes. Saturates outside
+/// the range.
 fn encode_db(db: f32) -> u8 {
-    let clamped = db.clamp(-20.0, 20.0);
-    let v = ((1.0 - (clamped + 20.0) / 40.0) * 63.0).round() as i32;
+    let m = crate::EQ_MAX_DB;
+    let clamped = db.clamp(-m, m);
+    let v = ((1.0 - (clamped + m) / (2.0 * m)) * 63.0).round() as i32;
     v.clamp(0, 63) as u8
 }
 
 /// Inverse of `encode_db`. Bytes outside 0..=63 are clipped (some buggy
 /// editors stash junk in the high bits — the spec says 6-bit values).
 fn decode_db(b: u8) -> f32 {
-    20.0 - (b.min(63) as f32 / 63.0) * 40.0
+    crate::EQ_MAX_DB - (b.min(63) as f32 / 63.0) * 2.0 * crate::EQ_MAX_DB
 }
 
 /// Serialise a single preset to a writer. Always emits the magic header
@@ -149,14 +150,14 @@ mod tests {
     fn round_trip_full_range() {
         let preset = EqfPreset {
             name: "Test".to_string(),
-            preamp_db: 20.0,
-            bands: [-20.0, -10.0, -5.0, -2.0, 0.0, 2.0, 5.0, 10.0, 15.0, 20.0],
+            preamp_db: 12.0,
+            bands: [-12.0, -10.0, -5.0, -2.0, 0.0, 2.0, 5.0, 8.0, 10.0, 12.0],
         };
         let mut buf = Vec::new();
         write_eqf(&mut buf, &preset).unwrap();
         let read = read_eqf(&mut Cursor::new(&buf)).unwrap();
-        // Quantization step ≈ 0.635 dB → tolerate that.
-        assert!((read.preamp_db - 20.0).abs() < 0.7);
+        // Quantization step ≈ 0.38 dB → tolerate that.
+        assert!((read.preamp_db - 12.0).abs() < 0.7);
         for (got, want) in read.bands.iter().zip(preset.bands.iter()) {
             assert!((got - want).abs() < 0.7, "got {} want {}", got, want);
         }

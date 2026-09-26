@@ -7,7 +7,7 @@
 //! Options-menu fan-out in one file, easier to audit when adding a
 //! new shortcut or menu entry.
 
-use super::{AUDIO_EXTENSIONS, OneAmpApp, keymap};
+use super::{OneAmpApp, keymap};
 use crate::platform::updater::UpdateChecker;
 use crate::windows::{MainWindowAction, PlaylistAction};
 use eframe::egui;
@@ -27,34 +27,8 @@ impl OneAmpApp {
                     self.play_audio_path(path);
                 }
             }
-            MainWindowAction::OpenFile => {
-                // Winamp's "Play file": the picked files replace the
-                // playlist and start playing. Ctrl+Z restores the list.
-                let exts: Vec<&str> = AUDIO_EXTENSIONS
-                    .iter()
-                    .copied()
-                    .chain(["m3u", "m3u8", "pls"])
-                    .collect();
-                if let Some(paths) = rfd::FileDialog::new()
-                    .add_filter("Audio and playlists", &exts)
-                    .pick_files()
-                {
-                    self.remember_for_undo();
-                    self.playlist.clear();
-                    self.start_import(paths, true);
-                }
-            }
-            MainWindowAction::OpenFolder => {
-                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                    // Reuse the drag-drop ingest path: it dedupes against
-                    // the playlist, kicks off playback when the engine
-                    // was idle, and pulls the window forward when the
-                    // user just told us "play these tracks". `force_play
-                    // = false` mirrors Winamp's "Add Folder…" — appending
-                    // a folder mid-playback doesn't interrupt the song.
-                    self.start_import(vec![folder], false);
-                }
-            }
+            MainWindowAction::OpenFile => self.open_files_replace(),
+            MainWindowAction::OpenFolder => self.add_folder(),
             MainWindowAction::ToggleShade => {
                 self.windows.toggle_shade();
             }
@@ -454,7 +428,7 @@ impl OneAmpApp {
                 };
                 // Optimistic local update so held-key repeats keep
                 // stepping before the engine echoes back.
-                let new_vol = (self.state.volume.level + step).clamp(0.0, 1.0);
+                let new_vol = (self.state.volume.level + step).clamp(0.0, oneamp_core::MAX_VOLUME);
                 self.state.volume.level = new_vol;
                 self.audio.send_command(AudioCommand::SetVolume(new_vol));
             }
@@ -546,7 +520,7 @@ impl OneAmpApp {
             C::EqBand { band, up } => {
                 if let Some(g) = self.state.equalizer.gains.get(band).copied() {
                     let step = if up { 1.0 } else { -1.0 };
-                    let g = (g + step).clamp(-20.0, 20.0);
+                    let g = (g + step).clamp(-oneamp_core::EQ_MAX_DB, oneamp_core::EQ_MAX_DB);
                     self.audio
                         .send_command(AudioCommand::SetEqualizerBand(band, g));
                     self.windows.set_equalizer_current_preset(None);
@@ -554,7 +528,8 @@ impl OneAmpApp {
             }
             C::EqPreamp { up } => {
                 let step = if up { 1.0 } else { -1.0 };
-                let db = (self.state.equalizer.preamp_db + step).clamp(-20.0, 20.0);
+                let db = (self.state.equalizer.preamp_db + step)
+                    .clamp(-oneamp_core::EQ_MAX_DB, oneamp_core::EQ_MAX_DB);
                 self.audio
                     .send_command(AudioCommand::SetEqualizerPreamp(db));
             }
