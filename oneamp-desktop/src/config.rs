@@ -57,14 +57,6 @@ impl Default for EqualizerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
-pub struct AudioEffectsConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub master_bypass: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CrossfadeConfigWrapper {
     #[serde(default)]
@@ -84,31 +76,6 @@ impl Default for CrossfadeConfigWrapper {
 
 fn default_crossfade_duration() -> f32 {
     3.0
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct GaplessConfigWrapper {
-    #[serde(default = "default_gapless_enabled")]
-    pub enabled: bool,
-    #[serde(default = "default_prebuffer")]
-    pub prebuffer_secs: f32,
-}
-
-impl Default for GaplessConfigWrapper {
-    fn default() -> Self {
-        Self {
-            enabled: default_gapless_enabled(),
-            prebuffer_secs: default_prebuffer(),
-        }
-    }
-}
-
-fn default_gapless_enabled() -> bool {
-    true
-}
-
-fn default_prebuffer() -> f32 {
-    2.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -184,11 +151,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub equalizer: EqualizerConfig,
     #[serde(default)]
-    pub audio_effects: AudioEffectsConfig,
-    #[serde(default)]
     pub crossfade: CrossfadeConfigWrapper,
-    #[serde(default)]
-    pub gapless: GaplessConfigWrapper,
     #[serde(default)]
     pub playback: PlaybackConfig,
     #[serde(default = "default_first_run")]
@@ -388,9 +351,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             equalizer: EqualizerConfig::default(),
-            audio_effects: AudioEffectsConfig::default(),
             crossfade: CrossfadeConfigWrapper::default(),
-            gapless: GaplessConfigWrapper::default(),
             playback: PlaybackConfig::default(),
             first_run: default_first_run(),
             skin_path: None,
@@ -561,9 +522,7 @@ impl AppConfig {
             };
         }
         pull!(equalizer);
-        pull!(audio_effects);
         pull!(crossfade);
-        pull!(gapless);
         pull!(playback);
         pull!(first_run);
         pull!(skin_path);

@@ -209,7 +209,6 @@ struct AudioEngineState {
     muted: bool,
     balance: f32,
     repeat_mode: RepeatMode,
-    shuffle_enabled: bool,
     /// Master pre-amp gain in dB applied after EQ band processing.
     /// Multiplied as `10^(preamp_db / 20)` against every output sample.
     preamp_db: f32,
@@ -248,10 +247,6 @@ struct AudioEngineState {
     /// avoids a gap in live audio. Names map to what
     /// `oneamp_core::list_output_devices` returns.
     output_device_name: Option<String>,
-    /// Loudness-compensation toggle. When true, the audio thread
-    /// derives a volume-dependent low- and high-shelf boost so quiet
-    /// listening preserves perceived tonal balance.
-    loudness_enabled: bool,
     /// See `AudioCommand::SetStopAfterCurrent`.
     stop_after_current: bool,
 }
@@ -263,7 +258,6 @@ impl Default for AudioEngineState {
             muted: false,
             balance: 0.0,
             repeat_mode: RepeatMode::Off,
-            shuffle_enabled: false,
             preamp_db: 0.0,
             crossfade_enabled: false,
             crossfade_duration_secs: 3.0,
@@ -272,7 +266,6 @@ impl Default for AudioEngineState {
             track_gain_db: 0.0,
             mono_enabled: false,
             output_device_name: None,
-            loudness_enabled: false,
             stop_after_current: false,
         }
     }
@@ -1229,7 +1222,8 @@ pub fn audio_thread_main_symphonia(
                     }
                 }
                 AudioCommand::SetShuffle(enabled) => {
-                    engine_state.shuffle_enabled = enabled;
+                    // Shuffle order lives in the app's playlist; the
+                    // engine only acknowledges the toggle.
                     let _ = event_tx.send(AudioEvent::ShuffleUpdated(enabled));
                 }
                 AudioCommand::SetOutputDevice(name) => {
@@ -1237,7 +1231,6 @@ pub fn audio_thread_main_symphonia(
                     let _ = event_tx.send(AudioEvent::OutputDeviceUpdated(name));
                 }
                 AudioCommand::SetLoudnessEnabled(enabled) => {
-                    engine_state.loudness_enabled = enabled;
                     loudness.set_enabled(enabled);
                     // Refresh comp curve so the toggle takes effect on
                     // the currently-playing track without waiting for

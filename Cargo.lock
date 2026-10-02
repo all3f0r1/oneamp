@@ -3687,7 +3687,6 @@ name = "oneamp-desktop"
 version = "1.3.3"
 dependencies = [
  "anyhow",
- "arc-swap",
  "crossbeam-channel",
  "dirs 7.0.0",
  "eframe",

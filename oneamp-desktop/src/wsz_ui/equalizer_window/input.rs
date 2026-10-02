@@ -348,12 +348,11 @@ impl EqualizerWindow {
             preamp_db: self.preamp,
             bands: self.eq_bands,
         };
-        let Ok(file) = std::fs::File::create(&path) else {
-            return;
-        };
-        let mut writer = std::io::BufWriter::new(file);
-        if let Err(e) = eqf::write_eqf(&mut writer, &preset) {
-            eprintln!("Failed to save .eqf {}: {}", path.display(), e);
+        let mut bytes = Vec::new();
+        let saved = eqf::write_eqf(&mut bytes, &preset)
+            .and_then(|()| oneamp_core::write_atomic(&path, &bytes).map_err(Into::into));
+        if let Err(e) = saved {
+            crate::dialog_util::show_error(&format!("Failed to save preset: {e}"));
         }
     }
 }

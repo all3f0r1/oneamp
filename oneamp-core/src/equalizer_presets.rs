@@ -408,11 +408,6 @@ impl PresetManager {
     pub fn custom_count(&self) -> usize {
         self.custom_presets.len()
     }
-
-    /// Get total number of presets (built-in + custom)
-    pub fn total_count(&self) -> usize {
-        BuiltinPresets::cached().len() + self.custom_presets.len()
-    }
 }
 
 impl Default for PresetManager {

@@ -551,11 +551,6 @@ impl AudioOutput {
             .then(|| self.device_format.bits_per_sample())
     }
 
-    /// Whether the device runs at the source rate (no resampling).
-    pub fn is_native_rate(&self) -> bool {
-        self.device_rate == self.sample_rate
-    }
-
     /// Attenuation applied in the callback, clamped to [0, 1].
     pub fn set_volume(&self, volume: f32) {
         self.shared

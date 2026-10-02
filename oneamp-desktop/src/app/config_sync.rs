@@ -68,7 +68,7 @@ impl OneAmpApp {
     /// single list of those fields: `flush_config` saves this snapshot and
     /// `check_persistable_drift` compares it, so a new setting can't be
     /// saved without being drift-checked (or the reverse). Anything not
-    /// set here (audio_effects, gapless, …) keeps whatever the previous
+    /// set here (crossfade, ReplayGain, …) keeps whatever the previous
     /// load produced.
     fn live_config(&mut self) -> crate::config::AppConfig {
         let mut c = self.config.clone();

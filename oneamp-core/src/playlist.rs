@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use crate::TrackInfo;
@@ -959,32 +959,6 @@ impl Playlist {
         }
     }
 
-    /// Remove entry at index
-    pub fn remove_entry(&mut self, index: usize) -> Option<PlaylistEntry> {
-        if index < self.entries.len() {
-            let entry = self.entries.remove(index);
-
-            // Adjust current index if needed
-            if let Some(current) = self.current_index {
-                if current == index {
-                    self.current_index = None;
-                } else if current > index {
-                    self.current_index = Some(current - 1);
-                }
-            }
-
-            self.remap_after_removal(index);
-
-            if self.shuffle_enabled {
-                self.regenerate_shuffle();
-            }
-
-            Some(entry)
-        } else {
-            None
-        }
-    }
-
     /// Clear all entries
     pub fn clear(&mut self) {
         self.entries.clear();
@@ -1242,45 +1216,6 @@ impl Playlist {
             .collect()
     }
 
-    /// Persist the full playlist (entries + current index + shuffle
-    /// state) to a JSON file. Used by the desktop app to keep the
-    /// queue across sessions. Unlike `save_m3u`, this preserves *all*
-    /// metadata cached on each entry — title, artist, album, year,
-    /// genre, track number, duration — so the saved file can be
-    /// reopened without re-probing every track's tags.
-    pub fn save_state<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let content =
-            serde_json::to_string_pretty(self).context("Failed to serialize playlist state")?;
-        let tmp = path.as_ref().with_extension("json.tmp");
-        {
-            let mut f = File::create(&tmp).context("Failed to create temp playlist state file")?;
-            f.write_all(content.as_bytes())
-                .context("Failed to write temp playlist state file")?;
-            f.sync_all()
-                .context("Failed to fsync temp playlist state file")?;
-        }
-        std::fs::rename(&tmp, path.as_ref())
-            .context("Failed to rename temp playlist state file into place")?;
-        Ok(())
-    }
-
-    /// Load a playlist previously written by [`save_state`]. Returns
-    /// `Ok(None)` when the file doesn't exist (fresh install, never
-    /// saved a session); returns `Err` only on corrupt content so the
-    /// caller can surface the problem without confusing it with a
-    /// first-launch state.
-    pub fn load_state<P: AsRef<Path>>(path: P) -> Result<Option<Self>> {
-        let path = path.as_ref();
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("Failed to read playlist state from {}", path.display()))?;
-        let playlist: Self = serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse playlist state at {}", path.display()))?;
-        Ok(Some(playlist))
-    }
-
     /// Save playlist to .m3u file with absolute track paths.
     pub fn save_m3u<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.write_m3u(path.as_ref(), false)
@@ -1383,29 +1318,22 @@ impl Playlist {
         self.write_m3u(path.as_ref(), true)
     }
 
-    /// Save playlist to .pls file
+    /// Save playlist to .pls file. Written atomically, like M3U.
     pub fn save_pls<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let mut file = File::create(path).context("Failed to create .pls file")?;
-
-        writeln!(file, "[playlist]")?;
-        writeln!(file, "NumberOfEntries={}", self.entries.len())?;
-
+        use std::fmt::Write as _;
+        let mut out = format!("[playlist]\nNumberOfEntries={}\n", self.entries.len());
         for (i, entry) in self.entries.iter().enumerate() {
             let num = i + 1;
-            writeln!(file, "File{}={}", num, entry.path.display())?;
-
+            let _ = writeln!(out, "File{}={}", num, entry.path.display());
             if let Some(ref title) = entry.title {
-                writeln!(file, "Title{}={}", num, title)?;
+                let _ = writeln!(out, "Title{}={}", num, title);
             }
-
             if let Some(duration) = entry.duration {
-                writeln!(file, "Length{}={}", num, duration.round() as i32)?;
+                let _ = writeln!(out, "Length{}={}", num, duration.round() as i32);
             }
         }
-
-        writeln!(file, "Version=2")?;
-
-        Ok(())
+        out.push_str("Version=2\n");
+        crate::write_atomic(path.as_ref(), out.as_bytes()).context("Failed to write .pls file")
     }
 
     /// Load playlist from .pls file

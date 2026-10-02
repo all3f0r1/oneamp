@@ -350,18 +350,6 @@ impl BiquadFilter {
         self.ramp_remaining > 0
     }
 
-    /// `true` when the *target* coefficients are exactly pass-through
-    /// — useful in tandem with [`ramp_active`] to distinguish "filter
-    /// is doing nothing" from "filter has just been asked to do
-    /// something and is still settling".
-    pub fn target_is_unity(&self) -> bool {
-        (self.target_b0 - 1.0).abs() < 1e-3
-            && self.target_b1.abs() < 1e-3
-            && self.target_b2.abs() < 1e-3
-            && self.target_a1.abs() < 1e-3
-            && self.target_a2.abs() < 1e-3
-    }
-
     /// Reset filter state (useful when changing tracks)
     pub fn reset(&mut self) {
         self.x1_l = 0.0;

@@ -77,10 +77,9 @@ impl TagEditorDialog {
 
     /// Convert the form back into an `EditableTags`. Empty strings map
     /// to `None` — the editor's "clear this field" gesture is just
-    /// blanking the text box. Year and track number parse leniently:
-    /// non-numeric garbage clears the field rather than rejecting the
-    /// save.
-    fn snapshot(&self) -> EditableTags {
+    /// blanking the text box. A year or track number that isn't a
+    /// number is an error: clearing the tag over a typo would lose it.
+    fn snapshot(&self) -> Result<EditableTags, String> {
         fn opt(s: &str) -> Option<String> {
             let t = s.trim();
             if t.is_empty() {
@@ -89,17 +88,28 @@ impl TagEditorDialog {
                 Some(t.to_string())
             }
         }
-        EditableTags {
+        Ok(EditableTags {
             title: opt(&self.title),
             artist: opt(&self.artist),
             album: opt(&self.album),
             album_artist: opt(&self.album_artist),
             genre: opt(&self.genre),
-            year: self.year.trim().parse().ok(),
-            tracknumber: self.tracknumber.trim().parse().ok(),
+            year: optional_number("Year", &self.year)?,
+            tracknumber: optional_number("Track #", &self.tracknumber)?,
             comment: opt(&self.comment),
-        }
+        })
     }
+}
+
+/// Blank is "no value"; anything else must be a whole number.
+fn optional_number(label: &str, raw: &str) -> Result<Option<u32>, String> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Ok(None);
+    }
+    t.parse()
+        .map(Some)
+        .map_err(|_| format!("{label} must be a number (or empty)"))
 }
 
 impl DialogView for TagEditorDialog {
@@ -180,18 +190,30 @@ impl DialogView for TagEditorDialog {
         ui.add_space(8.0);
         ui.horizontal(|ui| match confirm_buttons(ui, "Save") {
             ConfirmChoice::Accept => {
-                let snap = self.snapshot();
-                match snap.write(&self.path) {
-                    Ok(()) => {
-                        *outcome = DialogOutcome::Accepted(self.playlist_index);
-                    }
-                    Err(e) => {
-                        self.error = Some(format!("Write failed: {}", e));
-                    }
+                let written = self.snapshot().and_then(|snap| {
+                    snap.write(&self.path)
+                        .map_err(|e| format!("Write failed: {e}"))
+                });
+                match written {
+                    Ok(()) => *outcome = DialogOutcome::Accepted(self.playlist_index),
+                    Err(message) => self.error = Some(message),
                 }
             }
             ConfirmChoice::Cancel => *outcome = DialogOutcome::Cancelled,
             ConfirmChoice::None => {}
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::optional_number;
+
+    #[test]
+    fn optional_number_separates_blank_from_invalid() {
+        assert_eq!(optional_number("Year", "  "), Ok(None));
+        assert_eq!(optional_number("Year", " 1994 "), Ok(Some(1994)));
+        assert!(optional_number("Year", "199x").is_err());
+        assert!(optional_number("Track #", "3/12").is_err());
     }
 }

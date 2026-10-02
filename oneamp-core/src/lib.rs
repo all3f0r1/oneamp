@@ -401,49 +401,6 @@ fn parse_replaygain_db(raw: &str) -> Option<f32> {
 }
 
 impl TrackInfo {
-    /// Format audio information as a readable string
-    /// Example: "MP3 • 320kbps • 44.1kHz • Stereo"
-    pub fn format_audio_info(&self) -> String {
-        let mut parts = Vec::new();
-
-        // Add codec
-        if let Some(ref codec) = self.codec {
-            // Clean up codec name (remove debug formatting)
-            let clean_codec = codec
-                .replace("CODEC(", "")
-                .replace(")", "")
-                .replace("\"", "")
-                .trim()
-                .to_string();
-            parts.push(clean_codec);
-        }
-
-        // Add bitrate
-        if let Some(bitrate) = self.bitrate {
-            parts.push(format!("{}kbps", bitrate / 1000));
-        }
-
-        // Add sample rate
-        if let Some(sr) = self.sample_rate {
-            let sr_khz = sr as f32 / 1000.0;
-            parts.push(format!("{}kHz", sr_khz));
-        }
-
-        // Add channels
-        if let Some(ch) = self.channels {
-            let channel_name = match ch {
-                1 => "Mono".to_string(),
-                2 => "Stereo".to_string(),
-                6 => "5.1".to_string(),
-                8 => "7.1".to_string(),
-                _ => format!("{}ch", ch),
-            };
-            parts.push(channel_name);
-        }
-
-        parts.join(" • ")
-    }
-
     /// Extract metadata from a file
     pub fn from_file(path: &PathBuf) -> Result<Self> {
         let file = File::open(path).context("Failed to open audio file for metadata reading")?;
@@ -566,7 +523,7 @@ impl TagAccumulator {
                     | StandardTag::OriginalRecordingDate(v)
                     | StandardTag::OriginalReleaseDate(v),
                 ) if self.year.is_none() => {
-                    self.year = parse_year(v);
+                    self.year = tag_editor::parse_year(v);
                 }
                 Some(
                     StandardTag::RecordingYear(y)
@@ -593,21 +550,6 @@ fn codec_label(codec: symphonia::core::codecs::audio::AudioCodecId) -> String {
         .get_audio_decoder(codec)
         .map(|d| d.codec.info.short_name.to_uppercase())
         .unwrap_or_else(|| codec.to_string().to_uppercase())
-}
-
-/// Pull the first 4-digit year out of a date string. Handles `"1994"`,
-/// `"1994-07-15"`, `"(1994)"`, `"recorded 1994"`. Anything without four
-/// consecutive digits resolves to `None`.
-fn parse_year(raw: &str) -> Option<u32> {
-    let bytes = raw.as_bytes();
-    let mut i = 0;
-    while i + 4 <= bytes.len() {
-        if bytes[i..i + 4].iter().all(|b| b.is_ascii_digit()) {
-            return std::str::from_utf8(&bytes[i..i + 4]).ok()?.parse().ok();
-        }
-        i += 1;
-    }
-    None
 }
 
 /// Audio engine that runs in a separate thread

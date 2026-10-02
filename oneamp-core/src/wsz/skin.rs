@@ -135,13 +135,6 @@ impl WszSkin {
         }
     }
 
-    /// Find the `[Normal]` region — the polygon mask for the main window's
-    /// non-shade state. Comparison is case-insensitive because skin authors
-    /// don't agree on capitalization.
-    pub fn normal_region(&self) -> Option<&Region> {
-        self.region_by_name("Normal")
-    }
-
     /// Case-insensitive lookup for a named region. Returns the first non-empty
     /// region matching `name` — empty regions are treated as "no mask".
     pub fn region_by_name(&self, name: &str) -> Option<&Region> {

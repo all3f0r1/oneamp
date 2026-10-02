@@ -53,7 +53,11 @@ impl EditableTags {
             return Ok(Self::default());
         };
 
-        Ok(Self {
+        Ok(Self::from_tag(tag))
+    }
+
+    fn from_tag(tag: &Tag) -> Self {
+        Self {
             title: get_text(tag, ItemKey::TrackTitle),
             artist: get_text(tag, ItemKey::TrackArtist),
             album: get_text(tag, ItemKey::AlbumTitle),
@@ -69,15 +73,19 @@ impl EditableTags {
                 .or_else(|| get_text(tag, ItemKey::RecordingDate).and_then(|s| parse_year(&s))),
             tracknumber: get_text(tag, ItemKey::TrackNumber).and_then(|s| parse_tracknumber(&s)),
             comment: get_text(tag, ItemKey::Comment),
-        })
+        }
     }
 
-    /// Write `self` back to `path`, replacing the matching tag fields
-    /// in place. Fields set to `None` are *removed* from the tag — the
-    /// editor's "clear this field" gesture has to map to something. We
-    /// keep every other tag field (e.g. ReplayGain, MusicBrainz IDs)
-    /// untouched so a quick title edit doesn't strip pre-existing
-    /// metadata.
+    /// Write `self` back to `path`. Only fields that differ from what
+    /// the file holds are touched; a changed field set to `None` is
+    /// *removed* from the tag — the editor's "clear this field" gesture
+    /// has to map to something.
+    ///
+    /// Leaving unchanged fields alone matters because this struct is
+    /// lossy: a `1994-07-15` recording date reads as year `1994` and a
+    /// `3/12` track number as `3`, so rewriting them on a title-only
+    /// edit would throw the rest away. Every other tag field (ReplayGain,
+    /// MusicBrainz IDs, …) is untouched too.
     pub fn write<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path = path.as_ref();
         let mut tagged = Probe::open(path)
@@ -100,32 +108,33 @@ impl EditableTags {
             );
         };
 
-        set_or_clear(tag, ItemKey::TrackTitle, self.title.as_deref());
-        set_or_clear(tag, ItemKey::TrackArtist, self.artist.as_deref());
-        set_or_clear(tag, ItemKey::AlbumTitle, self.album.as_deref());
-        set_or_clear(tag, ItemKey::AlbumArtist, self.album_artist.as_deref());
-        set_or_clear(tag, ItemKey::Genre, self.genre.as_deref());
-        set_or_clear(
-            tag,
-            ItemKey::Year,
-            self.year.as_ref().map(|y| y.to_string()).as_deref(),
+        let current = Self::from_tag(tag);
+        let mut text = |key: ItemKey, new: &Option<String>, old: &Option<String>| {
+            if new != old {
+                set_or_clear(tag, key, new.as_deref());
+            }
+        };
+        text(ItemKey::TrackTitle, &self.title, &current.title);
+        text(ItemKey::TrackArtist, &self.artist, &current.artist);
+        text(ItemKey::AlbumTitle, &self.album, &current.album);
+        text(
+            ItemKey::AlbumArtist,
+            &self.album_artist,
+            &current.album_artist,
         );
-        // Some MP3 taggers write the year only into `TDRC`
-        // (RecordingDate). Clear that too so the user's edit isn't
-        // shadowed by stale data — but only when the user actually
-        // touched the year field (Some(_) overwrites; None just
-        // clears). We always remove the dangling RecordingDate so the
-        // canonical Year field is the single source of truth.
-        tag.remove_key(ItemKey::RecordingDate);
-        if let Some(y) = self.year {
-            tag.insert_text(ItemKey::RecordingDate, y.to_string());
+        text(ItemKey::Genre, &self.genre, &current.genre);
+        text(ItemKey::Comment, &self.comment, &current.comment);
+        if self.year != current.year {
+            let year = self.year.map(|y| y.to_string());
+            // Some taggers keep the year only in `TDRC` (RecordingDate):
+            // set both so the edit isn't shadowed by the old date.
+            set_or_clear(tag, ItemKey::Year, year.as_deref());
+            set_or_clear(tag, ItemKey::RecordingDate, year.as_deref());
         }
-        set_or_clear(
-            tag,
-            ItemKey::TrackNumber,
-            self.tracknumber.as_ref().map(|n| n.to_string()).as_deref(),
-        );
-        set_or_clear(tag, ItemKey::Comment, self.comment.as_deref());
+        if self.tracknumber != current.tracknumber {
+            let track = self.tracknumber.map(|n| n.to_string());
+            set_or_clear(tag, ItemKey::TrackNumber, track.as_deref());
+        }
 
         // lofty's WriteOptions default already does the right thing
         // (preserve padding, keep the same tag types that were
@@ -165,7 +174,7 @@ fn parse_tracknumber(raw: &str) -> Option<u32> {
 }
 
 /// First 4-digit year inside a date-like string.
-fn parse_year(raw: &str) -> Option<u32> {
+pub(crate) fn parse_year(raw: &str) -> Option<u32> {
     let bytes = raw.as_bytes();
     let mut i = 0;
     while i + 4 <= bytes.len() {
@@ -195,6 +204,47 @@ mod tests {
         assert_eq!(parse_year("1994-07-15"), Some(1994));
         assert_eq!(parse_year("recorded 2003 by"), Some(2003));
         assert_eq!(parse_year("not a year"), None);
+    }
+
+    #[test]
+    fn write_keeps_the_fields_the_user_did_not_change() {
+        let path = std::env::temp_dir().join(format!("oneamp_tags_{}.flac", std::process::id()));
+        std::fs::write(&path, include_bytes!("../tests/fixtures/tone16.flac")).unwrap();
+        let raw = |key: ItemKey| {
+            let tagged = Probe::open(&path).unwrap().read().unwrap();
+            get_text(tagged.primary_tag().unwrap(), key)
+        };
+        {
+            let mut tagged = Probe::open(&path).unwrap().read().unwrap();
+            if tagged.primary_tag().is_none() {
+                let kind = tagged.primary_tag_type();
+                tagged.insert_tag(Tag::new(kind));
+            }
+            let tag = tagged.primary_tag_mut().unwrap();
+            tag.insert_text(ItemKey::RecordingDate, "1994-07-15".into());
+            tag.insert_text(ItemKey::TrackNumber, "3/12".into());
+            tag.save_to_path(&path, WriteOptions::default()).unwrap();
+        }
+        let date_before = raw(ItemKey::RecordingDate);
+        let track_before = raw(ItemKey::TrackNumber);
+        assert_eq!(date_before.as_deref(), Some("1994-07-15"));
+
+        // Title-only edit: date and track number survive verbatim.
+        let mut tags = EditableTags::read(&path).unwrap();
+        assert_eq!((tags.year, tags.tracknumber), (Some(1994), Some(3)));
+        tags.title = Some("New title".into());
+        tags.write(&path).unwrap();
+        assert_eq!(raw(ItemKey::TrackTitle).as_deref(), Some("New title"));
+        assert_eq!(raw(ItemKey::RecordingDate), date_before);
+        assert_eq!(raw(ItemKey::TrackNumber), track_before);
+
+        // Changing the year does replace the date.
+        tags.year = Some(2001);
+        tags.write(&path).unwrap();
+        assert_eq!(EditableTags::read(&path).unwrap().year, Some(2001));
+        assert_eq!(raw(ItemKey::RecordingDate).as_deref(), Some("2001"));
+
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

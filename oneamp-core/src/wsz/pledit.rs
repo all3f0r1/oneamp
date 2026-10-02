@@ -74,7 +74,9 @@ fn parse_hex_color(raw: &str) -> Option<[u8; 3]> {
         .or_else(|| trimmed.strip_prefix("0x"))
         .or_else(|| trimmed.strip_prefix("0X"))
         .unwrap_or(trimmed);
-    if stripped.len() != 6 {
+    // ASCII check before slicing: `len` counts bytes, and a multi-byte
+    // character would put a slice boundary mid-codepoint (a panic).
+    if stripped.len() != 6 || !stripped.is_ascii() {
         return None;
     }
     let r = u8::from_str_radix(&stripped[0..2], 16).ok()?;
@@ -192,6 +194,9 @@ mod tests {
         assert_eq!(parse_hex_color("0x0000ff"), Some([0, 0, 0xFF]));
         assert_eq!(parse_hex_color("not a color"), None);
         assert_eq!(parse_hex_color("#FF"), None);
+        // Six bytes after `#`, but `é` is two of them: must be rejected,
+        // not sliced mid-character.
+        assert_eq!(parse_hex_color("#aé123"), None);
     }
 
     #[test]
