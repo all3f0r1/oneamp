@@ -69,6 +69,11 @@
   </screenshots>
 
   <releases>
+    <release version="1.3.3" date="2026-10-02">
+      <description>
+        <p>Fixes and a lighter footprint. Media keys start playback when the player is stopped. With Repeat off, playback stops after the last track. A slow or dropped internet radio no longer holds up Stop or volume changes, and stream addresses in playlists are kept as addresses. CPU use when stopped or paused drops from about 18 % to 3 % of a core.</p>
+      </description>
+    </release>
     <release version="1.3.2" date="2026-09-26">
       <description>
         <p>Reliability fixes. A stalled internet radio stream no longer freezes stopping or closing the player. The display returns to stopped when the playlist ends. Device names with accented characters no longer crash the menus. Play and Pause behave the same everywhere, and presets and playlists are saved safely.</p>

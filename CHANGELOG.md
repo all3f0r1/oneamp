@@ -4,6 +4,36 @@ All notable changes to OneAmp are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] — 2026-10-02
+
+### Fixed
+- Play and Play/Pause from the media keys, the desktop media widget or
+  `playerctl` now start the current track when the player is stopped;
+  they used to do nothing.
+- With Repeat off, playback stops after the last track instead of
+  starting the playlist over.
+- An internet radio that is slow to answer no longer holds up Stop,
+  Pause or volume changes: streams connect and decode off the audio
+  thread.
+- While a dropped stream reconnects, the output is silent instead of
+  being fed filler data. After the last failed attempt the stream ends
+  and the playlist moves on.
+- A file played from a URL (a podcast episode) ends at its end instead
+  of reconnecting and starting over.
+- A stream URL inside an M3U playlist, or passed on the command line, is
+  kept as a URL instead of being treated as a relative file path.
+- After a crash or a kill, the next launch is the single instance again:
+  the leftover socket no longer makes every relaunch open a new window.
+
+### Performance
+- CPU use drops from about 18 % to 3 % of a core when stopped or paused,
+  and from about 22 % to 17 % while playing: the window repaints 30
+  times a second while playing and 10 otherwise instead of
+  continuously, and the audio thread sleeps when it has nothing to
+  decode.
+- The window appears about 75 ms sooner on Linux: the tray icon is set
+  up in the background.
+
 ## [1.3.2] — 2026-09-26
 
 ### Fixed
