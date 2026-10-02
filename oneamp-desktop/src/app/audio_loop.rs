@@ -8,18 +8,7 @@
 
 use super::{OneAmpApp, PlaybackState};
 use oneamp_core::AudioCommand;
-use std::path::{Path, PathBuf};
-
-/// Heuristic for "this path is actually an HTTP URL stashed in a
-/// `PathBuf`". Playlist entries built from `Open URL…` use the URL as
-/// their path (so the dedup key stays unique), but for resume / file
-/// I/O purposes those rows aren't real paths — they can't be seeked
-/// and can't have positions persisted.
-fn is_url_path(p: &Path) -> bool {
-    p.to_str()
-        .map(|s| s.starts_with("http://") || s.starts_with("https://"))
-        .unwrap_or(false)
-}
+use std::path::PathBuf;
 
 impl OneAmpApp {
     /// Send `AudioCommand::Play(path)` to the audio engine and record the
@@ -50,13 +39,7 @@ impl OneAmpApp {
         // PathBuf so the dedupe key stays unique. Route them through
         // PlayUrl instead of Play — the file-open path would just fail
         // with a "No such file" error.
-        let url = path.to_str().and_then(|s| {
-            if s.starts_with("http://") || s.starts_with("https://") {
-                Some(s.to_string())
-            } else {
-                None
-            }
-        });
+        let url = oneamp_core::is_stream_url(&path).then(|| path.to_string_lossy().into_owned());
         if let Some(url) = url {
             self.recent.add_file(path);
             self.audio.send_command(AudioCommand::PlayUrl(url));
@@ -101,6 +84,22 @@ impl OneAmpApp {
                     self.play_audio_path(path);
                 }
             }
+        }
+    }
+
+    /// The current track is the playlist's last and Repeat is off:
+    /// playback ends with it.
+    fn repeat_off_at_end(&self) -> bool {
+        matches!(self.state.repeat_mode, oneamp_core::RepeatMode::Off) && self.playlist.at_end()
+    }
+
+    /// "Play" from the OS media bus (media keys, MPRIS, lock screen):
+    /// resume when paused, start the current entry when stopped, and
+    /// leave a playing track alone — unlike Winamp's `X`, a media-key
+    /// Play must never restart the song.
+    pub(super) fn media_play(&mut self) {
+        if !matches!(self.state.playback, PlaybackState::Playing) {
+            self.toggle_playback();
         }
     }
 
@@ -221,8 +220,14 @@ impl OneAmpApp {
                             std::time::Duration::from_millis(2000),
                         );
                     } else {
-                        // Track ended without repeat — auto-advance through the playlist
-                        let next = self.playlist.next_entry().map(|e| e.path.clone());
+                        // Track ended without repeat — auto-advance through
+                        // the playlist, but don't wrap: Repeat off stops
+                        // after the last track, which stays current.
+                        let next = if self.repeat_off_at_end() {
+                            None
+                        } else {
+                            self.playlist.next_entry().map(|e| e.path.clone())
+                        };
                         if let Some(path) = next {
                             self.play_audio_path(path);
                         } else {
@@ -274,7 +279,7 @@ impl OneAmpApp {
                         && let Some(saved) = self.resume.get(&track.path)
                         && saved >= crate::resume_store::RESUME_MIN_OFFSET_SECS
                         && saved < duration - 5.0
-                        && !is_url_path(&track.path)
+                        && !oneamp_core::is_stream_url(&track.path)
                     {
                         self.pending_resume = Some((track.path.clone(), saved));
                     }
@@ -456,7 +461,7 @@ impl OneAmpApp {
             return;
         };
         let path = track.path.clone();
-        if is_url_path(&path) {
+        if oneamp_core::is_stream_url(&path) {
             return;
         }
         // Throttle: skip the upsert until SAVE_INTERVAL_SECS have
@@ -508,7 +513,9 @@ impl OneAmpApp {
         if !(0.0..lead).contains(&remaining) {
             return;
         }
-        if self.playlist.entries().len() < 2 {
+        // Never preload across the end of the playlist with Repeat off:
+        // the engine would swap gaplessly into track 1 instead of stopping.
+        if self.playlist.entries().len() < 2 || self.repeat_off_at_end() {
             return;
         }
         let Some(idx) = self.playlist.peek_next_index() else {

@@ -23,6 +23,10 @@ impl OneAmpApp {
     /// been processed (so menu state reflects the current frame's
     /// outcome).
     pub(super) fn dispatch_menu_events(&mut self, ctx: &egui::Context) {
+        if let Some(tray) = self.tray.as_mut() {
+            tray.poll_bindings(&mut self.menu_bindings);
+        }
+
         // Menu items (macOS menu bar AND tray context menu).
         while let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
             if let Some(cmd) = self.menu_bindings.get(&event.id).cloned() {

@@ -92,10 +92,14 @@ pub fn try_forward(paths: &[PathBuf]) -> bool {
 /// (no-op on Windows where there is no filesystem entry).
 pub fn bind_primary() -> io::Result<(Receiver<Vec<PathBuf>>, PrimaryGuard)> {
     let name = socket_name()?;
-    // ListenerOptions::reclaim_name(true) is the default on Unix — it
-    // unlinks a stale socket file from a crashed previous primary
-    // before binding. On Windows there is no analogous cleanup needed
-    // (named pipes vanish with the process that bound them).
+    // A primary that was killed or crashed leaves its socket file
+    // behind, and binding over it fails with EADDRINUSE
+    // (`reclaim_name` only unlinks on the listener's drop, not before
+    // bind). `try_forward` just failed to connect, so nobody is
+    // listening: the file is stale and safe to remove. On Windows named
+    // pipes vanish with the process that bound them.
+    #[cfg(unix)]
+    let _ = std::fs::remove_file(socket_path());
     let listener = ListenerOptions::new().name(name).create_sync()?;
 
     let (tx, rx) = unbounded::<Vec<PathBuf>>();
@@ -187,7 +191,7 @@ fn read_paths<R: Read>(stream: &mut R) -> io::Result<Vec<PathBuf>> {
 
 /// RAII guard that removes the Unix socket file when the primary
 /// process shuts down cleanly. Crash cleanup on Unix is handled by the
-/// next primary's `ListenerOptions::reclaim_name(true)` default. On
+/// next primary's `bind_primary`, which unlinks the stale file. On
 /// Windows the guard carries no state — named pipes evaporate with
 /// the bound process.
 pub struct PrimaryGuard {
@@ -217,7 +221,7 @@ pub fn collect_arg_paths() -> Vec<PathBuf> {
 }
 
 fn absolutise(p: PathBuf) -> PathBuf {
-    if p.is_absolute() {
+    if p.is_absolute() || oneamp_core::is_stream_url(&p) {
         return p;
     }
     match std::env::current_dir() {

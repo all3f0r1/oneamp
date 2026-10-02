@@ -60,8 +60,7 @@ impl Session {
 /// Local file that no longer exists. URLs (stored as paths) are never
 /// flagged: their availability is only known by connecting.
 pub fn is_unavailable(path: &Path) -> bool {
-    let s = path.to_string_lossy();
-    !(s.starts_with("http://") || s.starts_with("https://") || path.exists())
+    !(oneamp_core::is_stream_url(path) || path.exists())
 }
 
 #[cfg(test)]

@@ -58,32 +58,22 @@ pub type ReconnectSnapshot = Arc<ArcSwap<ReconnectState>>;
 /// fast enough that a 1 s blip recovers without the user noticing,
 /// slow enough on the tail that we don't hammer a flaky server.
 ///
-/// These sleeps happen on a *background* reconnect thread — never on
-/// the audio thread — so the cumulative ~18 s no longer freezes
-/// playback while we retry (see `spawn_reconnect` / `Read::read`).
+/// The sleeps happen inside `Read::read`. That is fine because an
+/// `HttpStream` is only ever read on the stream decode worker (see
+/// `stream_player`), never on the engine thread: while a reconnect is
+/// in flight the worker simply produces no PCM and the output plays
+/// silence. Nothing is injected into the compressed stream.
 const RECONNECT_BACKOFFS_SECS: &[u64] = &[1, 2, 5, 10];
 
-/// How long the `Read` impl blocks waiting for the reconnect thread to
-/// hand off a body before falling back to emitting silence. Kept tiny
-/// (tens of ms) so the audio thread is never parked for a perceptible
-/// time — long enough to coalesce with the decoder's natural pull rate
-/// so we don't spin the CPU, short enough to stay responsive.
-const RECONNECT_POLL_TIMEOUT: Duration = Duration::from_millis(50);
-
-/// Size of the zero-filled silence buffer the `Read` impl returns while
-/// a reconnect is in flight. Returning a small non-empty buffer (rather
-/// than `Ok(0)`, which symphonia reads as EOF) keeps the decoder fed
-/// with benign padding without busy-looping; symphonia tolerates the
-/// junk bytes as undecodable filler and recovers cleanly once the real
-/// body resumes.
-const RECONNECT_SILENCE_CHUNK: usize = 4096;
+/// Granularity of the cancellable backoff sleep.
+const CANCEL_POLL: Duration = Duration::from_millis(100);
 
 /// Longest the body may go silent before we call the connection dead
 /// and hand it to the reconnect path. ureq's timeouts only cover the
 /// request / response headers (its `recv_body` is a total-duration
 /// budget, wrong for an endless radio stream), so a server that stops
-/// sending without closing would otherwise block the audio thread —
-/// and with it `Stop` / `Shutdown` — forever.
+/// sending without closing would otherwise park the decode worker
+/// forever.
 const BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Chunks buffered between the body pump thread and the reader.
@@ -190,75 +180,49 @@ pub struct HttpStream {
     /// transition; the audio thread polls and forwards changes
     /// upstream as `AudioEvent::StreamReconnect`.
     reconnect_state: ReconnectSnapshot,
-    /// Guard against double-spawning the reconnect worker. Set `true`
-    /// when a background reconnect is in flight; cleared once its
-    /// result has been consumed by the read path. Lives in an `Arc` so
-    /// the worker thread can clear it on the way out even if the
-    /// `HttpStream` outlives a given attempt.
-    reconnecting: Arc<AtomicBool>,
-    /// Handoff channel from the background reconnect worker. The worker
-    /// sends exactly one `ReconnectResult`; the `Read` impl polls this
-    /// non-blocking (with a tiny timeout) and swaps in the new body on
-    /// success. `None` between attempts — re-armed each time a fresh
-    /// worker is spawned.
-    ///
-    /// Wrapped in a `Mutex` purely to keep `HttpStream: Sync` (symphonia's
-    /// `MediaSource` requires it) — `Receiver` is `Send` but not `Sync`.
-    /// Every access is through `&mut self`, so we use `get_mut()` and
-    /// never actually take the lock on the hot path.
-    reconnect_rx: Mutex<Option<Receiver<ReconnectResult>>>,
+    /// Set by the owner (the engine side of `stream_player`) when the
+    /// stream is abandoned, so a reconnect backoff stops early instead
+    /// of retrying a URL nobody listens to any more.
+    cancel: Arc<AtomicBool>,
+    /// The response carried a `Content-Length`: a finite file (podcast
+    /// episode), where a zero-byte read is the real end rather than a
+    /// dropped radio connection.
+    finite: bool,
 }
 
-/// What the background reconnect worker hands back to the `Read` impl.
-/// On success it carries the freshly opened body plus its ICY interval
-/// and content type (mirrors `connect_body`'s tuple); on failure it
-/// signals that every backoff was exhausted so the read path can
-/// surface a hard error to symphonia.
-enum ReconnectResult {
-    Connected {
-        body: Box<dyn Read + Send + Sync>,
-        meta_interval: Option<usize>,
-        content_type: Option<String>,
-    },
-    Failed,
+/// What one `GET` yields: the body reader plus the response metadata
+/// `open` and `reconnect` both need.
+struct Connection {
+    body: Box<dyn Read + Send + Sync>,
+    meta_interval: Option<usize>,
+    content_type: Option<String>,
+    finite: bool,
 }
 
 impl HttpStream {
     /// Open an HTTP(S) stream. The connection is established
-    /// synchronously; on success the returned struct is ready to be
-    /// wrapped in `symphonia::core::io::MediaSourceStream`.
-    ///
-    /// Times out after 15 s on connect to avoid stalling the audio
-    /// thread on a dead URL. After connect, a body silent for
-    /// `BODY_IDLE_TIMEOUT` is treated as dropped and reconnected.
-    pub fn open(url: &str) -> Result<Self> {
-        let (body, meta_interval, content_type) = Self::connect_body(url)?;
-        let icy_title: IcySnapshot = Arc::new(ArcSwap::from_pointee(String::new()));
-        let reconnect_state: ReconnectSnapshot =
-            Arc::new(ArcSwap::from_pointee(ReconnectState::Connected));
-
+    /// synchronously (up to 15 s for connect and for the response
+    /// headers), so call it off the engine thread. After connect, a body
+    /// silent for `BODY_IDLE_TIMEOUT` is treated as dropped and
+    /// reconnected. `cancel` aborts a reconnect in progress.
+    pub fn open(url: &str, cancel: Arc<AtomicBool>) -> Result<Self> {
+        let conn = Self::connect_body(url)?;
         Ok(Self {
-            body,
+            body: conn.body,
             url: url.to_string(),
-            bytes_until_meta: meta_interval.unwrap_or(0),
-            meta_interval,
-            icy_title,
-            content_type,
-            reconnect_state,
-            reconnecting: Arc::new(AtomicBool::new(false)),
-            reconnect_rx: Mutex::new(None),
+            bytes_until_meta: conn.meta_interval.unwrap_or(0),
+            meta_interval: conn.meta_interval,
+            icy_title: Arc::new(ArcSwap::from_pointee(String::new())),
+            content_type: conn.content_type,
+            reconnect_state: Arc::new(ArcSwap::from_pointee(ReconnectState::Connected)),
+            cancel,
+            finite: conn.finite,
         })
     }
 
     /// Shared GET path used by `open` (cold start) and `reconnect`
-    /// (warm retry). Returns the bits each path needs to wire up its
-    /// own `HttpStream` state — body reader + ICY interval + content
-    /// type. Errors propagate the same way `open` did before this
-    /// helper got factored out, so callers' error context survives.
-    #[allow(clippy::type_complexity)]
-    fn connect_body(
-        url: &str,
-    ) -> Result<(Box<dyn Read + Send + Sync>, Option<usize>, Option<String>)> {
+    /// (warm retry).
+    fn connect_body(url: &str) -> Result<Connection> {
         let agent = ureq::Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(15)))
             .timeout_recv_response(Some(Duration::from_secs(15)))
@@ -273,163 +237,57 @@ impl HttpStream {
             .call()
             .with_context(|| format!("HTTP GET failed for {}", url))?;
 
-        let meta_interval = response
-            .headers()
-            .get("icy-metaint")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<usize>().ok());
-        let content_type = response
-            .headers()
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+        let header = |name: &str| response.headers().get(name).and_then(|v| v.to_str().ok());
+        let meta_interval = header("icy-metaint").and_then(|s| s.parse::<usize>().ok());
+        let content_type = header("content-type").map(|s| s.to_string());
+        let finite = header("content-length").is_some();
 
         let (_parts, body) = response.into_parts();
-        let body: Box<dyn Read + Send + Sync> =
-            Box::new(PumpReader::spawn(body.into_reader(), BODY_IDLE_TIMEOUT));
-        Ok((body, meta_interval, content_type))
+        Ok(Connection {
+            body: Box::new(PumpReader::spawn(body.into_reader(), BODY_IDLE_TIMEOUT)),
+            meta_interval,
+            content_type,
+            finite,
+        })
     }
 
-    /// Kick off a reconnect on a *background* thread if one isn't
-    /// already running. The expensive part — the `sum(RECONNECT_BACKOFFS_SECS)`
-    /// ≈ 18 s of cumulative backoff sleeps plus the blocking `GET` —
-    /// runs entirely off the audio thread, so `Read::read` is never
-    /// parked for seconds during a network blip. The worker walks the
-    /// backoff schedule, publishing `Reconnecting { attempt }` before
-    /// each sleep, and hands its outcome back over `reconnect_rx`.
-    ///
-    /// The `reconnecting` flag guards against double-spawning: a body
-    /// that keeps erroring on every poll would otherwise launch a new
-    /// worker per `read` call. Cloned `Arc`s (url, state, title slot,
-    /// flag) keep the worker independent of `&mut self`, so the audio
-    /// thread can return immediately.
-    fn spawn_reconnect(&mut self) {
-        // Already mid-reconnect — leave the in-flight worker to finish.
-        if self.reconnecting.swap(true, Ordering::AcqRel) {
-            return;
-        }
-
-        let (tx, rx) = mpsc::channel::<ReconnectResult>();
-        *self.reconnect_rx.get_mut().unwrap() = Some(rx);
-
-        let url = self.url.clone();
-        let reconnect_state = self.reconnect_state.clone();
-        let reconnecting = self.reconnecting.clone();
-
-        std::thread::Builder::new()
-            .name("http-stream-reconnect".into())
-            .spawn(move || {
-                let mut result = ReconnectResult::Failed;
-                for (i, delay_secs) in RECONNECT_BACKOFFS_SECS.iter().enumerate() {
-                    reconnect_state.store(Arc::new(ReconnectState::Reconnecting {
-                        attempt: (i + 1) as u32,
-                    }));
-                    std::thread::sleep(Duration::from_secs(*delay_secs));
-                    if let Ok((body, meta_interval, content_type)) = Self::connect_body(&url) {
-                        result = ReconnectResult::Connected {
-                            body,
-                            meta_interval,
-                            content_type,
-                        };
-                        break;
-                    }
+    /// Re-`GET` the URL after the body dropped, walking the backoff
+    /// schedule and publishing `Reconnecting { attempt }` before each
+    /// wait. Blocks the calling (decode worker) thread. `Ok` means a
+    /// fresh body is in place; `Err` means every attempt failed or the
+    /// stream was cancelled, and is surfaced to symphonia as the end of
+    /// the stream.
+    fn reconnect(&mut self) -> std::io::Result<()> {
+        for (i, delay_secs) in RECONNECT_BACKOFFS_SECS.iter().enumerate() {
+            self.reconnect_state
+                .store(Arc::new(ReconnectState::Reconnecting {
+                    attempt: (i + 1) as u32,
+                }));
+            let wake = std::time::Instant::now() + Duration::from_secs(*delay_secs);
+            while std::time::Instant::now() < wake {
+                if self.cancel.load(Ordering::Relaxed) {
+                    return Err(std::io::Error::other("HTTP stream cancelled"));
                 }
-
-                // Only publish `Connected`/`Failed` here; the read path
-                // re-arms `reconnecting` to `false` once it has actually
-                // consumed this result, so a slow consumer can't race a
-                // second worker into existence before the swap happens.
-                match &result {
-                    ReconnectResult::Connected { .. } => {
-                        reconnect_state.store(Arc::new(ReconnectState::Connected));
-                    }
-                    ReconnectResult::Failed => {
-                        reconnect_state.store(Arc::new(ReconnectState::Failed));
-                    }
-                }
-
-                // If the receiver was dropped (HttpStream torn down mid
-                // reconnect) the send just errors out harmlessly.
-                let _ = tx.send(result);
-                // Clear the guard last so a fresh failure after a failed
-                // reconnect is allowed to spawn another worker.
-                reconnecting.store(false, Ordering::Release);
-            })
-            .expect("spawn http-stream-reconnect thread");
-    }
-
-    /// Non-blocking check for a body handed off by the background
-    /// reconnect worker. Blocks at most `RECONNECT_POLL_TIMEOUT` (tens
-    /// of ms) — never the multi-second backoff — so the audio thread
-    /// stays responsive while still parking briefly instead of
-    /// busy-spinning between polls.
-    ///
-    /// - `Ok(true)`  → a fresh body was swapped in; the caller should
-    ///   retry the real read.
-    /// - `Ok(false)` → still reconnecting; the caller should emit a
-    ///   short silence chunk and try again next read.
-    /// - `Err(..)`   → every retry was exhausted; surface to symphonia.
-    fn poll_reconnect(&mut self) -> std::io::Result<bool> {
-        // Scope the receiver borrow to just the poll so the match arms
-        // are free to reassign `reconnect_rx`.
-        let recv_result = match self.reconnect_rx.get_mut().unwrap().as_ref() {
-            Some(rx) => rx.recv_timeout(RECONNECT_POLL_TIMEOUT),
-            // No worker armed (shouldn't happen on this path) — treat as
-            // still-pending so we emit silence rather than EOF.
-            None => return Ok(false),
-        };
-
-        match recv_result {
-            Ok(ReconnectResult::Connected {
-                body,
-                meta_interval,
-                content_type,
-            }) => {
-                // Swap the fresh body in. The ICY title snapshot is left
-                // untouched — from the listener's perspective the same
+                std::thread::sleep(CANCEL_POLL);
+            }
+            if let Ok(conn) = Self::connect_body(&self.url) {
+                // The ICY title snapshot is left untouched — the same
                 // logical stream continues, so the last-seen title stays
                 // valid until the new body's first metadata block lands.
-                self.body = body;
-                self.meta_interval = meta_interval;
-                self.bytes_until_meta = meta_interval.unwrap_or(0);
-                self.content_type = content_type;
-                *self.reconnect_rx.get_mut().unwrap() = None;
-                Ok(true)
-            }
-            Ok(ReconnectResult::Failed) => {
-                *self.reconnect_rx.get_mut().unwrap() = None;
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::ConnectionAborted,
-                    "HTTP stream reconnect failed after all retries",
-                ))
-            }
-            Err(RecvTimeoutError::Timeout) => Ok(false),
-            Err(RecvTimeoutError::Disconnected) => {
-                // Worker thread vanished without sending (panic on
-                // spawn, etc.). Treat as a hard failure.
-                *self.reconnect_rx.get_mut().unwrap() = None;
-                self.reconnect_state.store(Arc::new(ReconnectState::Failed));
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::ConnectionAborted,
-                    "HTTP stream reconnect worker disconnected",
-                ))
+                self.body = conn.body;
+                self.meta_interval = conn.meta_interval;
+                self.bytes_until_meta = conn.meta_interval.unwrap_or(0);
+                self.content_type = conn.content_type;
+                self.reconnect_state
+                    .store(Arc::new(ReconnectState::Connected));
+                return Ok(());
             }
         }
-    }
-
-    /// Fill `buf` with a short run of zeroed silence and report how many
-    /// bytes were written. Used as backpressure while a reconnect is in
-    /// flight: returning a small non-empty buffer keeps symphonia
-    /// pulling (a `Ok(0)` would be read as EOF and stop the decoder)
-    /// without ever blocking the audio thread on the backoff. The bytes
-    /// are undecodable filler the decoder discards; real audio resumes
-    /// the moment the worker hands off a new body.
-    fn fill_silence(buf: &mut [u8]) -> usize {
-        let n = buf.len().min(RECONNECT_SILENCE_CHUNK);
-        for b in &mut buf[..n] {
-            *b = 0;
-        }
-        n
+        self.reconnect_state.store(Arc::new(ReconnectState::Failed));
+        Err(std::io::Error::new(
+            std::io::ErrorKind::ConnectionAborted,
+            "HTTP stream reconnect failed after all retries",
+        ))
     }
 
     /// Handle to the reconnect-state snapshot. Same wait-free poll
@@ -523,46 +381,25 @@ fn parse_stream_title(payload: &str) -> Option<String> {
 
 impl Read for HttpStream {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        // If a reconnect is already in flight, don't even touch the
-        // (dead) body — poll the worker for a tiny bounded window and
-        // either resume on the fresh body, surface the exhausted-retries
-        // error, or emit a short silence chunk as backpressure. This is
-        // the path that used to block the audio thread for ~18 s; it now
-        // returns within `RECONNECT_POLL_TIMEOUT` at worst.
-        if self.reconnect_rx.get_mut().unwrap().is_some() {
-            return if self.poll_reconnect()? {
-                self.read_once(buf)
-            } else {
-                Ok(Self::fill_silence(buf))
-            };
-        }
-
-        // Steady state: read against the live body. On a zero-byte read
-        // (server-side EOF / socket close) or a transient connection
-        // error we kick off a *background* reconnect and immediately
-        // return silence — the audio thread never sleeps on the backoff.
-        match self.read_once(buf) {
-            Ok(0) => {
-                // A radio stream never legitimately ends mid-listen;
-                // a zero read means the upstream closed the socket.
-                self.spawn_reconnect();
-                Ok(Self::fill_silence(buf))
-            }
-            Ok(n) => Ok(n),
-            Err(e) => {
-                // We only retry on the transient/connection-class
-                // errors symphonia is most likely to see when a
-                // network blip kills the body. Hard errors (invalid
-                // data inside our own consume_metadata_block, etc.)
-                // shouldn't trigger a reconnect.
-                use std::io::ErrorKind::*;
-                match e.kind() {
-                    UnexpectedEof | ConnectionReset | ConnectionAborted | BrokenPipe | TimedOut
-                    | Interrupted | WouldBlock => {
-                        self.spawn_reconnect();
-                        Ok(Self::fill_silence(buf))
+        loop {
+            match self.read_once(buf) {
+                // A finite file (podcast) really ended.
+                Ok(0) if self.finite => return Ok(0),
+                // A radio stream never legitimately ends mid-listen: a
+                // zero read means the upstream closed the socket.
+                Ok(0) => self.reconnect()?,
+                Ok(n) => return Ok(n),
+                Err(e) => {
+                    // Only the transient / connection-class errors a
+                    // network blip produces are retried. Hard errors
+                    // (invalid data in `consume_metadata_block`, …)
+                    // propagate.
+                    use std::io::ErrorKind::*;
+                    match e.kind() {
+                        UnexpectedEof | ConnectionReset | ConnectionAborted | BrokenPipe
+                        | TimedOut | Interrupted | WouldBlock => self.reconnect()?,
+                        _ => return Err(e),
                     }
-                    _ => Err(e),
                 }
             }
         }
@@ -570,10 +407,7 @@ impl Read for HttpStream {
 }
 
 impl HttpStream {
-    /// One pass of the read logic without any reconnect wrapper —
-    /// extracted so the `Read::read` impl can retry exactly once
-    /// after a successful reconnect without re-implementing the
-    /// metadata-boundary handling.
+    /// One pass of the read logic without the reconnect wrapper.
     fn read_once(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         // No ICY metadata interleaving — straight pass-through.
         let Some(interval) = self.meta_interval else {
@@ -627,8 +461,7 @@ impl MediaSource for HttpStream {
 /// can either gate behaviour or reject early. Anything other than
 /// `http` / `https` is rejected.
 pub fn validate_stream_url(url: &str) -> Result<()> {
-    let lower = url.trim().to_ascii_lowercase();
-    if lower.starts_with("http://") || lower.starts_with("https://") {
+    if is_stream_url_str(url.trim()) {
         Ok(())
     } else {
         Err(anyhow!(
@@ -636,6 +469,21 @@ pub fn validate_stream_url(url: &str) -> Result<()> {
             url
         ))
     }
+}
+
+fn is_stream_url_str(s: &str) -> bool {
+    ["http://", "https://"].iter().any(|scheme| {
+        s.get(..scheme.len())
+            .is_some_and(|p| p.eq_ignore_ascii_case(scheme))
+    })
+}
+
+/// Playlist entries, session rows and argv keep stream URLs in a
+/// `PathBuf`. This is the one test for "that path is really an HTTP(S)
+/// URL" — it must not be joined onto a directory, stat'ed, seeked or
+/// handed to the file decoder.
+pub fn is_stream_url(path: &std::path::Path) -> bool {
+    path.to_str().is_some_and(is_stream_url_str)
 }
 
 #[cfg(test)]
@@ -742,95 +590,55 @@ mod tests {
     }
 
     /// Build an `HttpStream` around an arbitrary in-memory body without
-    /// touching the network — lets us exercise the read / reconnect
-    /// state machine deterministically. The URL is bogus on purpose so
-    /// any background reconnect attempt fails fast through the backoff.
-    fn stream_from_body(body: Box<dyn Read + Send + Sync>, url: &str) -> HttpStream {
+    /// touching the network. The URL is unroutable on purpose so any
+    /// reconnect attempt fails fast.
+    fn stream_from_body(body: Vec<u8>, finite: bool) -> HttpStream {
         HttpStream {
-            body,
-            url: url.to_string(),
+            body: Box::new(std::io::Cursor::new(body)),
+            url: "http://127.0.0.1:1/never".to_string(),
             meta_interval: None,
             bytes_until_meta: 0,
             icy_title: Arc::new(ArcSwap::from_pointee(String::new())),
             content_type: None,
             reconnect_state: Arc::new(ArcSwap::from_pointee(ReconnectState::Connected)),
-            reconnecting: Arc::new(AtomicBool::new(false)),
-            reconnect_rx: Mutex::new(None),
+            cancel: Arc::new(AtomicBool::new(false)),
+            finite,
         }
     }
 
     #[test]
-    fn fill_silence_zeroes_and_bounds() {
-        // Smaller than the cap → fills the whole buffer with zeros.
-        let mut small = vec![0xAAu8; 16];
-        assert_eq!(HttpStream::fill_silence(&mut small), 16);
-        assert!(small.iter().all(|&b| b == 0));
-
-        // Larger than the cap → capped at RECONNECT_SILENCE_CHUNK.
-        let mut big = vec![0xAAu8; RECONNECT_SILENCE_CHUNK + 1024];
-        let n = HttpStream::fill_silence(&mut big);
-        assert_eq!(n, RECONNECT_SILENCE_CHUNK);
-        assert!(big[..n].iter().all(|&b| b == 0));
+    fn finite_body_ends_instead_of_reconnecting() {
+        // A podcast file: bytes, then a genuine EOF. No reconnect, no
+        // filler bytes.
+        let mut stream = stream_from_body(b"abc".to_vec(), true);
+        let mut out = Vec::new();
+        stream.read_to_end(&mut out).unwrap();
+        assert_eq!(out, b"abc");
+        assert_eq!(**stream.reconnect_state.load(), ReconnectState::Connected);
     }
 
     #[test]
-    fn read_on_eof_returns_silence_without_blocking_then_spawns_reconnect() {
-        // Empty body → first read sees EOF (Ok(0)). The read must NOT
-        // block on the backoff; it should return a silence chunk
-        // immediately and arm a background reconnect.
-        let body: Box<dyn Read + Send + Sync> = Box::new(std::io::Cursor::new(Vec::new()));
-        // Unroutable URL so the worker's GET fails fast each attempt.
-        let mut stream = stream_from_body(body, "http://127.0.0.1:1/never");
+    fn dropped_radio_body_reconnects_until_cancelled() {
+        // A radio body that hits EOF blocks in the reconnect backoff —
+        // it never hands symphonia filler bytes — and gives up as soon
+        // as the owner cancels.
+        let mut stream = stream_from_body(Vec::new(), false);
+        let cancel = stream.cancel.clone();
+        let state = stream.reconnect_state.clone();
+        let reader = std::thread::spawn(move || stream.read(&mut [0u8; 64]));
 
         let start = std::time::Instant::now();
-        let mut buf = vec![0xAAu8; 8192];
-        let n = stream
-            .read(&mut buf)
-            .expect("read should not error on first EOF");
-
-        // Returned promptly with silence (no multi-second backoff sleep
-        // on the audio thread).
-        assert!(start.elapsed() < Duration::from_secs(1));
-        assert_eq!(n, RECONNECT_SILENCE_CHUNK);
-        assert!(buf[..n].iter().all(|&b| b == 0));
-
-        // A reconnect worker is now armed.
-        assert!(stream.reconnect_rx.lock().unwrap().is_some());
-        assert!(stream.reconnecting.load(Ordering::Acquire));
-    }
-
-    #[test]
-    fn reconnect_failure_surfaces_error_after_retries() {
-        // Empty body + unroutable URL: the worker exhausts every backoff
-        // and reports Failed, which the read path must surface as a hard
-        // io::Error so symphonia stops. We poll `read` until it either
-        // errors (expected) or we time out the test.
-        let body: Box<dyn Read + Send + Sync> = Box::new(std::io::Cursor::new(Vec::new()));
-        let mut stream = stream_from_body(body, "http://127.0.0.1:1/never");
-
-        // Shorten our patience: the real backoff sums to ~18 s, but each
-        // poll only blocks RECONNECT_POLL_TIMEOUT, so we loop returning
-        // silence until the worker finally reports Failed.
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        let mut buf = vec![0u8; 8192];
-        loop {
-            match stream.read(&mut buf) {
-                Ok(n) => {
-                    // Pre-failure reads are silence chunks.
-                    assert_eq!(n, RECONNECT_SILENCE_CHUNK);
-                }
-                Err(e) => {
-                    assert_eq!(e.kind(), std::io::ErrorKind::ConnectionAborted);
-                    break;
-                }
-            }
+        while **state.load() == ReconnectState::Connected {
             assert!(
-                std::time::Instant::now() < deadline,
-                "reconnect never surfaced a failure"
+                start.elapsed() < Duration::from_secs(5),
+                "never reconnected"
             );
+            std::thread::sleep(Duration::from_millis(5));
         }
+        assert_eq!(**state.load(), ReconnectState::Reconnecting { attempt: 1 });
 
-        // Final published state is Failed.
-        assert_eq!(**stream.reconnect_state.load(), ReconnectState::Failed);
+        cancel.store(true, Ordering::Relaxed);
+        assert!(reader.join().unwrap().is_err());
+        assert!(start.elapsed() < Duration::from_secs(1));
     }
 }

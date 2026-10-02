@@ -37,16 +37,38 @@ use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
 /// * Win / macOS — directly owns the `TrayIcon` handle. Dropping
 ///   removes the icon from the system tray.
 /// * Linux — the icon and the GTK loop live on a detached thread;
-///   this side just keeps an empty marker so the field exists on all
-///   platforms. The process exiting collapses the GTK thread.
+///   this side only holds the channel the thread ships its menu
+///   bindings back on. The process exiting collapses the GTK thread.
 pub struct TrayService {
     #[cfg(not(target_os = "linux"))]
     _icon: tray_icon::TrayIcon,
+    #[cfg(target_os = "linux")]
+    pending: Option<crossbeam_channel::Receiver<HashMap<MenuId, MenuCommand>>>,
 }
 
 impl TrayService {
     pub fn install(bindings: &mut HashMap<MenuId, MenuCommand>) -> Option<Self> {
         install_impl(bindings)
+    }
+
+    /// Merge the tray menu's bindings into `bindings` once the GTK
+    /// thread has built the icon. Called every frame; a no-op after the
+    /// first delivery and on platforms where `install` is synchronous.
+    pub fn poll_bindings(&mut self, bindings: &mut HashMap<MenuId, MenuCommand>) {
+        #[cfg(target_os = "linux")]
+        if let Some(rx) = &self.pending {
+            match rx.try_recv() {
+                Ok(received) => {
+                    bindings.extend(received);
+                    self.pending = None;
+                }
+                // Thread gave up (no display / no tray host): stop polling.
+                Err(crossbeam_channel::TryRecvError::Disconnected) => self.pending = None,
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = bindings;
     }
 }
 
@@ -66,62 +88,50 @@ fn install_impl(bindings: &mut HashMap<MenuId, MenuCommand>) -> Option<TrayServi
 }
 
 #[cfg(target_os = "linux")]
-fn install_impl(bindings: &mut HashMap<MenuId, MenuCommand>) -> Option<TrayService> {
+fn install_impl(_bindings: &mut HashMap<MenuId, MenuCommand>) -> Option<TrayService> {
     use crossbeam_channel::bounded;
     use std::thread;
-    use std::time::Duration;
     use tray_icon::TrayIconBuilder;
 
     // One-shot channel: the GTK thread builds the menu + tray, ships
     // the freshly-minted bindings map back to us, then enters
-    // `gtk::main()` for the rest of the process lifetime.
-    let (tx, rx) = bounded::<Option<HashMap<MenuId, MenuCommand>>>(1);
+    // `gtk::main()` for the rest of the process lifetime. On failure it
+    // just drops the sender.
+    let (tx, rx) = bounded::<HashMap<MenuId, MenuCommand>>(1);
 
     thread::Builder::new()
         .name("oneamp-tray-gtk".to_string())
         .spawn(move || {
             if gtk::init().is_err() {
-                let _ = tx.send(None);
                 return;
             }
-            let icon = match build_icon() {
-                Some(i) => i,
-                None => {
-                    let _ = tx.send(None);
-                    return;
-                }
+            let Some(icon) = build_icon() else {
+                return;
             };
             let mut local_bindings: HashMap<MenuId, MenuCommand> = HashMap::new();
             let menu = build_menu(&mut local_bindings);
-            let _tray = match TrayIconBuilder::new()
+            let Ok(_tray) = TrayIconBuilder::new()
                 .with_menu(Box::new(menu))
                 .with_icon(icon)
                 .with_tooltip("OneAmp")
                 .build()
-            {
-                Ok(t) => t,
-                Err(_) => {
-                    let _ = tx.send(None);
-                    return;
-                }
+            else {
+                return;
             };
             // Hand the bindings to the main thread BEFORE blocking in
             // `gtk::main`. After this point the GTK thread is just an
             // event pump — all menu clicks land on the global
             // `MenuEvent::receiver()` queue the main thread drains.
-            let _ = tx.send(Some(local_bindings));
+            let _ = tx.send(local_bindings);
             gtk::main();
         })
         .ok()?;
 
-    // Block startup briefly while the GTK thread initialises. Two
-    // seconds is generous — gtk::init() + tray-icon build usually
-    // completes in <100 ms on a healthy Linux session. If we time out,
-    // assume the tray is not available (headless / no display) and
-    // fall back to no-tray; the rest of the app keeps working.
-    let received = rx.recv_timeout(Duration::from_secs(2)).ok()??;
-    bindings.extend(received);
-    Some(TrayService {})
+    // Don't wait for the GTK thread here: gtk::init() + tray-icon build
+    // takes ~80 ms, and the window isn't shown until the first frame.
+    // No bindings are needed until the icon exists; `poll_bindings`
+    // picks them up from the update loop.
+    Some(TrayService { pending: Some(rx) })
 }
 
 /// Build the tray menu and register each item's id in `bindings`.

@@ -257,7 +257,9 @@ fn collapse_empty_separators(s: &str) -> String {
 /// drive-absolute paths written with backslashes are treated as absolute.
 fn resolve_track_path(raw: &str, base_dir: Option<&Path>) -> PathBuf {
     let candidate = PathBuf::from(raw);
-    let is_absolute = candidate.is_absolute()
+    // A radio / podcast URL is never relative to the playlist's folder.
+    let is_absolute = crate::is_stream_url(&candidate)
+        || candidate.is_absolute()
         // Catch Windows-style `C:\...` even when parsed on Unix.
         || raw.as_bytes().get(1) == Some(&b':')
         || raw.starts_with('\\')
@@ -625,6 +627,32 @@ impl Playlist {
         self.regenerate_shuffle();
         self.history.clear();
         self.shuffle_order.first().copied().unwrap_or(0)
+    }
+
+    /// True when `next_entry` would start a new pass instead of moving
+    /// on: nothing queued and the current track is the last one — the
+    /// final row in sequential order, or in shuffle the last track the
+    /// anti-repeat pool had left. With Repeat off this is where playback
+    /// stops rather than wrapping.
+    ///
+    /// ponytail: shuffle on a playlist longer than `HISTORY_CAP` never
+    /// reports the end (the capped history can't cover every track);
+    /// needs a per-pass played set if that matters.
+    pub fn at_end(&self) -> bool {
+        let Some(current) = self.current_index else {
+            return false;
+        };
+        if !self.queue.is_empty() {
+            return false;
+        }
+        if !self.shuffle_enabled {
+            return current + 1 >= self.entries.len();
+        }
+        self.shuffle_order.len() == self.entries.len()
+            && self
+                .shuffle_order
+                .iter()
+                .all(|i| *i == current || self.history.contains(i))
     }
 
     /// Index that `next_entry` would advance to, without mutating state.
@@ -1576,6 +1604,40 @@ mod tests {
     }
 
     #[test]
+    fn at_end_marks_the_last_track_of_a_pass() {
+        let mut playlist = Playlist::new("Test".to_string());
+        assert!(!playlist.at_end(), "empty playlist has no end to stop at");
+        for i in 0..3 {
+            playlist.add_entry(PlaylistEntry::new(PathBuf::from(format!("song{}.mp3", i))));
+        }
+        playlist.set_current_index(Some(1));
+        assert!(!playlist.at_end());
+        playlist.set_current_index(Some(2));
+        assert!(playlist.at_end());
+        // A queued track still has to play.
+        playlist.queue_track(0);
+        assert!(!playlist.at_end());
+        playlist.next_entry();
+        assert_eq!(playlist.current_index, Some(0));
+
+        // Shuffle: the end is the third distinct track, wherever it sits.
+        let mut playlist = Playlist::new("Test".to_string());
+        for i in 0..3 {
+            playlist.add_entry(PlaylistEntry::new(PathBuf::from(format!("song{}.mp3", i))));
+        }
+        playlist.set_shuffle(true);
+        playlist.set_current_index(Some(0));
+        let mut played = vec![0];
+        while !playlist.at_end() {
+            playlist.next_entry();
+            played.push(playlist.current_index.unwrap());
+            assert!(played.len() <= 3, "shuffle pass never ended: {played:?}");
+        }
+        played.sort_unstable();
+        assert_eq!(played, vec![0, 1, 2]);
+    }
+
+    #[test]
     fn peek_next_index_matches_next_entry_sequential() {
         let mut playlist = Playlist::new("Test".to_string());
         for i in 0..5 {
@@ -1926,10 +1988,16 @@ mod tests {
             writeln!(f, "#EXTINF:120,Band - Song").unwrap();
             writeln!(f, "music/track1.mp3").unwrap();
             writeln!(f, "/abs/track2.mp3").unwrap();
+            writeln!(f, "http://radio.example/stream").unwrap();
         }
 
         let pl = Playlist::load_m3u(&m3u).unwrap();
-        assert_eq!(pl.len(), 2);
+        assert_eq!(pl.len(), 3);
+        // A stream URL is kept verbatim, not anchored to the folder.
+        assert_eq!(
+            pl.get_entry(2).unwrap().path,
+            PathBuf::from("http://radio.example/stream")
+        );
         // Relative path is anchored to the playlist's directory.
         assert_eq!(pl.get_entry(0).unwrap().path, dir.join("music/track1.mp3"));
         // Absolute path is left verbatim.

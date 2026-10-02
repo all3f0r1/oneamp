@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use crate::equalizer::BiquadFilter;
 use crate::output::AudioOutput;
+use crate::stream_player::{Player, StreamOpening};
 use crate::symphonia_player::SymphoniaPlayer;
 use crate::{
     AudioCaptureBuffer, AudioCommand, AudioEvent, Equalizer, MeterSnapshot, RepeatMode, TrackInfo,
@@ -792,7 +793,7 @@ fn retune_chain(
 
 /// Audio playback state
 struct PlaybackState {
-    player: SymphoniaPlayer,
+    player: Player,
     output: AudioOutput,
     is_paused: bool,
     /// Decoded audio to play before asking the decoder for more — the
@@ -852,6 +853,10 @@ pub fn audio_thread_main_symphonia(
     let mut current_reconnect: Option<crate::http_stream::ReconnectSnapshot> = None;
     let mut last_reconnect_state: crate::http_stream::ReconnectState =
         crate::http_stream::ReconnectState::Connected;
+    // An HTTP stream still connecting on its worker thread. Polled
+    // below; any command that replaces or stops playback drops it,
+    // which abandons the attempt.
+    let mut pending_stream: Option<StreamOpening> = None;
 
     // Create equalizer (shared between audio processing and command handling)
     let equalizer = Arc::new(Mutex::new(Equalizer::new(44100.0)));
@@ -905,7 +910,13 @@ pub fn audio_thread_main_symphonia(
         // idle CPU drops to ~0 % and command latency stays at <1 ms
         // under load. 5 ms is well under the audio buffer's 0.5 s
         // headroom — refill never falls behind.
-        if let Ok(cmd) = command_rx.recv_timeout(Duration::from_millis(5)) {
+        //
+        // With nothing to decode (stopped, paused) and no stream
+        // connecting, only a command can change anything, so the wait
+        // stretches and the thread stops waking 200 times a second.
+        let active = pending_stream.is_some() || playback.as_ref().is_some_and(|s| !s.is_paused);
+        let wait = Duration::from_millis(if active { 5 } else { 250 });
+        if let Ok(cmd) = command_rx.recv_timeout(wait) {
             match cmd {
                 AudioCommand::QueueNext(path) => {
                     // Skip if this exact path is already queued or already
@@ -941,6 +952,7 @@ pub fn audio_thread_main_symphonia(
                     // publisher before we open the new stream.
                     engine_state.stop_after_current = false;
                     playback = None;
+                    current_track = None;
                     next_pending = None;
                     current_icy = None;
                     last_icy_title.clear();
@@ -948,102 +960,9 @@ pub fn audio_thread_main_symphonia(
                     last_reconnect_state = crate::http_stream::ReconnectState::Connected;
                     engine_state.track_gain_db = 0.0;
 
-                    match crate::http_stream::HttpStream::open(&url) {
-                        Ok(stream) => {
-                            let icy_handle = stream.icy_title_handle();
-                            let reconnect_handle = stream.reconnect_state_handle();
-                            // Pick a hint extension from the response's
-                            // `content-type` header so symphonia
-                            // short-circuits codec sniffing — a plain
-                            // `audio/mpeg` shoutcast stream is
-                            // unambiguously MP3 even without a `.mp3`
-                            // URL suffix.
-                            let ext_hint = stream.content_type().and_then(|ct| {
-                                crate::http_stream::HttpStream::extension_from_content_type(ct)
-                            });
-                            // Hand the stream to symphonia. The
-                            // SymphoniaPlayer + RodioOutput pair is the
-                            // same plumbing the file path uses; the
-                            // only branch is the stream's origin.
-                            match SymphoniaPlayer::load_from_source(Box::new(stream), ext_hint) {
-                                Ok(player) => {
-                                    let sr = player.sample_rate();
-                                    let ch = player.channels();
-                                    let output_res = AudioOutput::new_with_device(
-                                        sr,
-                                        ch,
-                                        engine_state.output_device_name.as_deref(),
-                                    );
-                                    match output_res {
-                                        Ok(output) => {
-                                            // Build a stand-in `TrackInfo`
-                                            // — we don't have a path or
-                                            // duration, but the UI still
-                                            // wants codec/sample-rate to
-                                            // surface in the readout.
-                                            let track_info = TrackInfo {
-                                                path: PathBuf::from(&url),
-                                                title: Some(url.clone()),
-                                                artist: None,
-                                                album: None,
-                                                duration_secs: None,
-                                                sample_rate: Some(sr),
-                                                channels: Some(ch as u8),
-                                                codec: Some("HTTP STREAM".to_string()),
-                                                bitrate: None,
-                                                tracknumber: None,
-                                                year: None,
-                                                genre: None,
-                                                replaygain_track_gain_db: None,
-                                                replaygain_album_gain_db: None,
-                                            };
-                                            current_track = Some(track_info.clone());
-                                            let _ =
-                                                event_tx.send(AudioEvent::TrackLoaded(track_info));
-
-                                            output.set_volume(engine_state.device_volume());
-                                            retune_chain(
-                                                output.sample_rate() as f32,
-                                                &equalizer,
-                                                &mut loudness,
-                                                &mut limiter,
-                                                &mut meter,
-                                                engine_state.volume,
-                                            );
-                                            playback = Some(PlaybackState {
-                                                player,
-                                                output,
-                                                is_paused: false,
-                                                carry: Vec::new(),
-                                                draining: false,
-                                            });
-                                            current_icy = Some(icy_handle);
-                                            current_reconnect = Some(reconnect_handle);
-                                            last_reconnect_state =
-                                                crate::http_stream::ReconnectState::Connected;
-                                            let _ = event_tx.send(AudioEvent::Playing);
-                                        }
-                                        Err(e) => {
-                                            let _ = event_tx.send(AudioEvent::Error(format!(
-                                                "Audio device init failed: {}",
-                                                e
-                                            )));
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    let _ = event_tx.send(AudioEvent::Error(format!(
-                                        "Stream decode setup failed: {}",
-                                        e
-                                    )));
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            let _ = event_tx
-                                .send(AudioEvent::Error(format!("Stream open failed: {}", e)));
-                        }
-                    }
+                    // Connecting and probing can take seconds: do it on
+                    // the stream worker and pick the result up below.
+                    pending_stream = Some(StreamOpening::start(url));
                 }
                 AudioCommand::Play(path) => {
                     // Stop current playback. A user-initiated Play
@@ -1051,6 +970,7 @@ pub fn audio_thread_main_symphonia(
                     // may have nothing to do with what was queued.
                     engine_state.stop_after_current = false;
                     playback = None;
+                    pending_stream = None;
                     next_pending = None;
                     current_icy = None;
                     last_icy_title.clear();
@@ -1125,6 +1045,7 @@ pub fn audio_thread_main_symphonia(
                 AudioCommand::Stop => {
                     engine_state.stop_after_current = false;
                     playback = None;
+                    pending_stream = None;
                     current_track = None;
                     next_pending = None;
                     current_icy = None;
@@ -1134,7 +1055,9 @@ pub fn audio_thread_main_symphonia(
                     let _ = event_tx.send(AudioEvent::Stopped);
                 }
                 AudioCommand::Seek(pos) => {
-                    if let Some(ref mut state) = playback {
+                    if let Some(ref mut state) = playback
+                        && state.player.is_seekable()
+                    {
                         // Clamp into [0, duration - 2s]. Symphonia sometimes
                         // refuses to seek into the last seconds of a stream
                         // and the failure leaves the format reader in a
@@ -1198,6 +1121,7 @@ pub fn audio_thread_main_symphonia(
                 AudioCommand::Next => {
                     // Stop current playback and request next track from GUI
                     playback = None;
+                    pending_stream = None;
                     current_track = None;
                     current_icy = None;
                     last_icy_title.clear();
@@ -1208,6 +1132,7 @@ pub fn audio_thread_main_symphonia(
                 AudioCommand::Previous => {
                     // Stop current playback and request previous track from GUI
                     playback = None;
+                    pending_stream = None;
                     current_track = None;
                     current_icy = None;
                     last_icy_title.clear();
@@ -1359,6 +1284,72 @@ pub fn audio_thread_main_symphonia(
                 }
                 AudioCommand::Shutdown => {
                     break;
+                }
+            }
+        }
+
+        // A stream finished connecting: open the output for its format
+        // and start playing it.
+        if let Some(outcome) = pending_stream.as_mut().and_then(StreamOpening::try_ready) {
+            let url = pending_stream.take().map(|p| p.url).unwrap_or_default();
+            let started = outcome
+                .map_err(|e| format!("Stream open failed: {e}"))
+                .and_then(|ready| {
+                    let player = Player::Stream(ready.player);
+                    AudioOutput::new_with_device(
+                        player.sample_rate(),
+                        player.channels(),
+                        engine_state.output_device_name.as_deref(),
+                    )
+                    .map(|output| (player, ready.icy, ready.reconnect, output))
+                    .map_err(|e| format!("Audio device init failed: {e}"))
+                });
+            match started {
+                Ok((player, icy, reconnect, output)) => {
+                    // Stand-in `TrackInfo`: no path or duration, but the
+                    // UI still wants codec / sample rate in the readout.
+                    let track_info = TrackInfo {
+                        path: PathBuf::from(&url),
+                        title: Some(url),
+                        artist: None,
+                        album: None,
+                        duration_secs: None,
+                        sample_rate: Some(player.sample_rate()),
+                        channels: Some(player.channels() as u8),
+                        codec: Some("HTTP STREAM".to_string()),
+                        bitrate: None,
+                        tracknumber: None,
+                        year: None,
+                        genre: None,
+                        replaygain_track_gain_db: None,
+                        replaygain_album_gain_db: None,
+                    };
+                    current_track = Some(track_info.clone());
+                    let _ = event_tx.send(AudioEvent::TrackLoaded(track_info));
+
+                    output.set_volume(engine_state.device_volume());
+                    retune_chain(
+                        output.sample_rate() as f32,
+                        &equalizer,
+                        &mut loudness,
+                        &mut limiter,
+                        &mut meter,
+                        engine_state.volume,
+                    );
+                    playback = Some(PlaybackState {
+                        player,
+                        output,
+                        is_paused: false,
+                        carry: Vec::new(),
+                        draining: false,
+                    });
+                    current_icy = Some(icy);
+                    current_reconnect = Some(reconnect);
+                    last_reconnect_state = crate::http_stream::ReconnectState::Connected;
+                    let _ = event_tx.send(AudioEvent::Playing);
+                }
+                Err(message) => {
+                    let _ = event_tx.send(AudioEvent::Error(message));
                 }
             }
         }
@@ -1691,7 +1682,7 @@ pub fn audio_thread_main_symphonia(
 
                     match (swap, playback.as_mut()) {
                         (Some(pending), Some(state)) => {
-                            state.player = pending.player;
+                            state.player = Player::File(pending.player);
                             state.carry = pending.carry;
                             state.draining = false;
                             // Gapless swap brings in a new track — refresh
@@ -1737,7 +1728,7 @@ fn load_and_play(path: &Path, device_name: Option<&str>) -> Result<PlaybackState
         .context("Failed to create audio output")?;
 
     Ok(PlaybackState {
-        player,
+        player: Player::File(player),
         output,
         is_paused: false,
         carry: Vec::new(),

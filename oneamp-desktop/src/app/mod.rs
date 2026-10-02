@@ -29,7 +29,7 @@ use crate::audio::AudioController;
 use crate::config::{AppConfig, VisualizerModeConfig};
 use crate::dialog_util::DialogView;
 use crate::i18n::{Lang, Strings};
-use crate::platform::media_controls::MediaControlsService;
+use crate::platform::media_controls::{MediaControlsService, MediaIntent};
 use crate::platform::menu_bar::{MacMenuBar, MenuCommand, MenuId};
 use crate::platform::notifications::NotificationService;
 use crate::platform::tray::TrayService;
@@ -251,6 +251,11 @@ fn remap_filtered_playlist_action(
 /// keyboard.
 const OUTPUT_DEVICE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Frame pacing when nothing but time drives the UI — see the end of
+/// `update`.
+const PLAYING_FRAME: std::time::Duration = std::time::Duration::from_millis(33);
+const IDLE_FRAME: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// Main OneAmp application (WSZ-only)
 pub struct OneAmpApp {
     /// Centralized application state
@@ -373,9 +378,9 @@ pub struct OneAmpApp {
 
     /// Cross-OS system-tray icon (Shell_NotifyIcon / NSStatusItem /
     /// StatusNotifierItem). `None` when the platform refused to host
-    /// us (headless CI, no display, GTK init failed). Held to keep
-    /// the icon alive — dropping it removes the tray entry.
-    #[allow(dead_code)]
+    /// us. Held to keep the icon alive — dropping it removes the tray
+    /// entry. On Linux the icon is built asynchronously on its GTK
+    /// thread; `dispatch_menu_events` collects its menu bindings.
     tray: Option<TrayService>,
 
     /// Combined `MenuId → MenuCommand` map populated by the macOS
@@ -1265,6 +1270,19 @@ impl OneAmpApp {
     }
 }
 
+/// 1-based queue position of every playlist index (`None` = not queued),
+/// in one pass over the queue rather than a queue search per row. An
+/// index queued twice shows its first (soonest) position.
+fn queue_badges(queue: &[usize], playlist_len: usize) -> Vec<Option<usize>> {
+    let mut badges = vec![None; playlist_len];
+    for (pos, &idx) in queue.iter().enumerate().rev() {
+        if let Some(slot) = badges.get_mut(idx) {
+            *slot = Some(pos + 1);
+        }
+    }
+    badges
+}
+
 /// Detached windows need the app to position its own windows, which
 /// Wayland forbids (`OuterPosition` is ignored), so the mode is limited
 /// to X11, Windows and macOS.
@@ -1360,8 +1378,15 @@ impl eframe::App for OneAmpApp {
         // clicks, `playerctl …`) and translate them into AudioCommands
         // / viewport commands. Done after `process_audio_events` so any
         // state change we react to is published outward first.
-        if let Some(mpris) = self.mpris.as_mut() {
-            mpris.poll_events(&self.audio, ctx);
+        let media_intents = match self.mpris.as_mut() {
+            Some(mpris) => mpris.poll_events(&self.audio, ctx),
+            None => Vec::new(),
+        };
+        for intent in media_intents {
+            match intent {
+                MediaIntent::Play => self.media_play(),
+                MediaIntent::Toggle => self.toggle_playback(),
+            }
         }
 
         // Background update check: usually `None` for the first
@@ -1414,14 +1439,10 @@ impl eframe::App for OneAmpApp {
         // Queue badges, aligned to whichever view (filtered or full) the
         // playlist window will paint. Values are 1-based queue positions
         // in real playlist space, resolved through the filter remap.
+        let queued_all = queue_badges(self.playlist.queue(), self.playlist.len());
         let queued_view: Vec<Option<usize>> = match filter_remap.as_ref() {
-            Some(remap) => remap
-                .iter()
-                .map(|&real_idx| self.playlist.queued_position(real_idx))
-                .collect(),
-            None => (0..entries_view.len())
-                .map(|i| self.playlist.queued_position(i))
-                .collect(),
+            Some(remap) => remap.iter().map(|&real_idx| queued_all[real_idx]).collect(),
+            None => queued_all,
         };
 
         self.windows.set_eq_auto(self.config.equalizer.auto);
@@ -1669,7 +1690,7 @@ impl eframe::App for OneAmpApp {
         // wrote out — this catches volume slider drags, balance moves,
         // MPRIS-driven mutations and EQ tweaks in one place, without
         // needing every mutation site to remember to call `mark_dirty()`.
-        // Cheap: ~12 scalar compares + one slice compare on EQ gains.
+        // Cheap: one config clone + compare, ~10 µs measured.
         self.check_persistable_drift();
 
         // Flush the dirty config once the user has been idle for
@@ -1688,7 +1709,16 @@ impl eframe::App for OneAmpApp {
         self.tick_sleep_timer();
         self.save_session(false);
 
-        ctx.request_repaint();
+        // Input wakes egui by itself; this only paces the frames nobody
+        // asked for. Playing: the visualizer's source data refreshes at
+        // ~30 Hz, so painting faster shows nothing new. Otherwise only
+        // the title marquee and the polled channels (audio events, IPC,
+        // tray, media keys) need a tick.
+        // ponytail: polling, not event wake-ups — an idle media key or
+        // "open with" lands up to IDLE_FRAME late. Hand the egui context
+        // to those threads if that ever matters.
+        let busy = matches!(self.state.playback, PlaybackState::Playing) || self.import.is_some();
+        ctx.request_repaint_after(if busy { PLAYING_FRAME } else { IDLE_FRAME });
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
@@ -1730,6 +1760,16 @@ impl eframe::App for OneAmpApp {
 #[cfg(test)]
 mod tests {
     use super::pick_render_scale;
+
+    #[test]
+    fn queue_badges_match_queue_order() {
+        // Index 2 is queued twice: its first position wins. Index 9 is
+        // out of range (stale queue) and is ignored.
+        assert_eq!(
+            super::queue_badges(&[2, 0, 2, 9], 4),
+            vec![Some(2), None, Some(1), None]
+        );
+    }
 
     #[test]
     fn pick_render_scale_snaps_up_to_next_integer() {

@@ -58,6 +58,13 @@ pub struct MediaControlsService {
     last_volume_milli: Option<i32>,
 }
 
+/// Transport requests the service can't resolve on its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaIntent {
+    Play,
+    Toggle,
+}
+
 impl MediaControlsService {
     /// Register with the OS media bus. `cc` is the eframe creation
     /// context — needed on Windows to fetch the HWND that SMTC binds
@@ -98,18 +105,21 @@ impl MediaControlsService {
     /// Drain pending events that the OS posted (Play, Next, SetVolume,
     /// …) and translate them into the engine's command vocabulary.
     /// `Raise` and `Quit` go to the viewport instead — they're window
-    /// management, not playback.
-    pub fn poll_events(&mut self, audio: &AudioController, ctx: &egui::Context) {
+    /// management, not playback. Play and Toggle are returned for the
+    /// app to apply: starting a stopped player needs the playlist, which
+    /// only the app has.
+    #[must_use]
+    pub fn poll_events(
+        &mut self,
+        audio: &AudioController,
+        ctx: &egui::Context,
+    ) -> Vec<MediaIntent> {
+        let mut intents = Vec::new();
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
-                MediaControlEvent::Play => audio.send_command(AudioCommand::Resume),
+                MediaControlEvent::Play => intents.push(MediaIntent::Play),
                 MediaControlEvent::Pause => audio.send_command(AudioCommand::Pause),
-                MediaControlEvent::Toggle => match self.last_status {
-                    LastStatus::Playing => audio.send_command(AudioCommand::Pause),
-                    LastStatus::Paused | LastStatus::Stopped => {
-                        audio.send_command(AudioCommand::Resume)
-                    }
-                },
+                MediaControlEvent::Toggle => intents.push(MediaIntent::Toggle),
                 MediaControlEvent::Next => audio.send_command(AudioCommand::Next),
                 MediaControlEvent::Previous => audio.send_command(AudioCommand::Previous),
                 MediaControlEvent::Stop => audio.send_command(AudioCommand::Stop),
@@ -143,6 +153,7 @@ impl MediaControlsService {
                 | MediaControlEvent::OpenUri(_) => {}
             }
         }
+        intents
     }
 
     /// Push an audio engine event into the media-controls service so

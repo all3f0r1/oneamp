@@ -20,6 +20,7 @@ pub mod http_stream;
 pub mod output;
 pub mod playlist;
 pub mod recent_files;
+mod stream_player;
 pub mod symphonia_player;
 pub mod tag_editor;
 pub mod wsz;
@@ -33,6 +34,7 @@ pub const MAX_VOLUME: f32 = 1.5;
 
 pub use equalizer::{EQ_MAX_DB, Equalizer};
 pub use equalizer_presets::{BuiltinPresets, EQ_FREQUENCIES, EqualizerPreset, PresetManager};
+pub use http_stream::is_stream_url;
 pub use output::list_output_devices;
 pub use playlist::{Playlist, PlaylistEntry, SortOrder};
 pub use recent_files::{RecentFile, RecentFiles};
