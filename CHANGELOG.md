@@ -4,6 +4,30 @@ All notable changes to OneAmp are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] — 2026-10-16
+
+### Added
+- Tooltips on every clickable control of the main, equalizer and
+  playlist windows: hover a button, slider or menu row for half a second
+  to see what it does (the skin sprites only say "EJECT", "CROP",
+  "O A I D V"…).
+
+### Fixed
+- Double-clicking a file in the file manager that is already in the
+  playlist now plays it (without adding it again); it used to do nothing.
+- The tag editor only writes the fields you changed. Editing a title no
+  longer rewrites a full recording date down to the year or a "3/12"
+  track number down to "3"; a year or track number that isn't a number
+  is refused with a message instead of clearing the tag.
+- A skin whose `pledit.txt` holds a malformed colour no longer crashes
+  the player.
+- PLS playlists and EQF presets are saved atomically; a failed EQF
+  export now shows an error.
+
+### Changed
+- Unused settings (`audio_effects`, `gapless`) are dropped from the
+  config file on the next save.
+
 ## [1.3.3] — 2026-10-02
 
 ### Fixed
