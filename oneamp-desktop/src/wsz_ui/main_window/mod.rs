@@ -400,6 +400,7 @@ impl WszMainWindow {
                 // user's pick. Z-ordering against the parent player is
                 // handled by the OS (the popup is `AlwaysOnTop`).
                 let menu_action = self.drive_main_menu(ctx);
+                self.render_tips(ui, offset);
                 action.or(drag_action).or(options_action).or(menu_action)
             });
 

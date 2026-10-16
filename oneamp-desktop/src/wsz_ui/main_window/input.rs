@@ -226,6 +226,57 @@ impl WszMainWindow {
         action
     }
 
+    /// Hover hints for every clickable area (see `wsz_ui::tip`).
+    pub(super) fn render_tips(&self, ui: &egui::Ui, offset: egui::Pos2) {
+        let scale = self.renderer.get_scale();
+        let rect = |x: u32, y: u32, w: u32, h: u32| {
+            egui::Rect::from_min_size(
+                self.renderer.skin_to_screen(x, y, offset),
+                Vec2::new(w as f32 * scale, h as f32 * scale),
+            )
+        };
+        let tip = |(x, y, w, h, text): (u32, u32, u32, u32, &str)| {
+            crate::wsz_ui::tip(ui, rect(x, y, w, h), text)
+        };
+        if self.custom_chrome {
+            for t in [
+                (6, 3, 9, 9, "Main menu"),
+                (244, 3, 9, 9, "Minimize"),
+                (254, 3, 9, 9, "Mini mode"),
+                (264, 3, 9, 9, "Close"),
+            ] {
+                tip(t);
+            }
+        }
+        // Clutterbar slots match `Clutterbar::letter_at_y`.
+        for t in [
+            (10, 22, 8, 9, "Main menu"),
+            (10, 31, 8, 9, "Always on top (not available yet)"),
+            (10, 40, 8, 9, "File info (not available yet)"),
+            (10, 49, 8, 8, "Double size"),
+            (10, 57, 8, 8, "Visualization plugins (not available yet)"),
+            (
+                24,
+                43,
+                76,
+                16,
+                "Click: change visualization\nShift+click: open the equalizer at this frequency",
+            ),
+            (48, 26, 51, 13, "Click: elapsed / remaining time"),
+            (16, 72, 248, 10, "Seek (mouse wheel: ±5 s)"),
+            (107, 57, 68, 13, "Volume"),
+            (177, 57, 38, 13, "Balance"),
+            (253, 91, 13, 15, "About OneAmp"),
+        ] {
+            tip(t);
+        }
+        for b in self.buttons.buttons() {
+            let (x, y) = b.button_type.position();
+            let (w, h) = b.button_type.size();
+            tip((x, y, w, h, b.button_type.tip()));
+        }
+    }
+
     fn handle_button_click(
         &mut self,
         button: WinampButton,

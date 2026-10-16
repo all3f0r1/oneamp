@@ -569,6 +569,43 @@ impl PlaylistWindow {
         }
     }
 
+    /// Hover hints for every clickable area (see `wsz_ui::tip`). While a
+    /// popup is open its rows get the hints, since it covers the buttons.
+    pub(super) fn render_tips(&self, ui: &egui::Ui, offset: Pos2) {
+        use super::{MINI_TRANSPORT, MINI_TRANSPORT_H, MINI_TRANSPORT_Y, skin_rect};
+        use super::{RESIZE_HANDLE_H, RESIZE_HANDLE_W, RESIZE_HANDLE_X, RESIZE_HANDLE_Y};
+        let tip = |x, y, w, h, text| {
+            crate::wsz_ui::tip(ui, skin_rect(&self.renderer, offset, x, y, w, h), text)
+        };
+        if let Some(idx) = self.open_submenu {
+            for (row, text) in PARENTS[idx].tips.iter().enumerate() {
+                crate::wsz_ui::tip(ui, self.submenu_row_rect(offset, idx, row), text);
+            }
+        } else {
+            for p in &PARENTS {
+                tip(p.skin_x, self.buttons_y(), 22, 18, p.tip);
+            }
+        }
+        tip(PL_WIDTH - 11, 3, 9, 9, "Close");
+        let bar_y = self.body_bot() - 72;
+        for mt in &MINI_TRANSPORT {
+            tip(
+                mt.skin_x,
+                bar_y + MINI_TRANSPORT_Y,
+                mt.w,
+                MINI_TRANSPORT_H,
+                mt.cmd.tip(),
+            );
+        }
+        tip(
+            RESIZE_HANDLE_X,
+            bar_y + RESIZE_HANDLE_Y,
+            RESIZE_HANDLE_W,
+            RESIZE_HANDLE_H,
+            "Drag to resize",
+        );
+    }
+
     /// Render the open submenu: rows stacked upwards from the parent button
     /// (bottom row covers it), hovered row in its pressed sprite, 3-px bar
     /// on the left over the button's bevel.
@@ -627,6 +664,13 @@ mod tests {
         assert_eq!(super::fmt_hms(0.0), "0:00");
         assert_eq!(super::fmt_hms(125.9), "2:05");
         assert_eq!(super::fmt_hms(3725.0), "1:02:05");
+    }
+
+    #[test]
+    fn every_submenu_row_has_a_tip() {
+        for p in super::super::PARENTS.iter() {
+            assert_eq!(p.actions.len(), p.tips.len());
+        }
     }
 
     #[test]

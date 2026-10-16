@@ -426,6 +426,23 @@ impl EqualizerWindow {
                 // before returning so the modal name-prompt dialog
                 // opens exactly once per click.
                 self.render_band_readout(ui, offset);
+                // Sliders already show their band + dB in the readout.
+                for (r, text) in [
+                    (EQ_BUTTON, "Equalizer on / off"),
+                    (AUTO_BUTTON, "Auto: load the preset saved for each track"),
+                    (PRESETS_BUTTON, "Presets: load, save, auto-load"),
+                    (
+                        SkinRect {
+                            x: 264,
+                            y: 3,
+                            w: 9,
+                            h: 9,
+                        },
+                        "Close",
+                    ),
+                ] {
+                    super::tip(ui, r.screen_rect(&self.renderer, offset), text);
+                }
                 self.pending_action.take().or(input_action)
             });
 

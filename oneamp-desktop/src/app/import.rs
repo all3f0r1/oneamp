@@ -132,23 +132,31 @@ impl OneAmpApp {
             return;
         };
         let mut done = false;
-        let mut first_new: Option<usize> = None;
+        // First entry to play: a new one, or with `force_play` one already
+        // in the list (double-clicking a file that's queued plays it).
+        let mut first_hit: Option<usize> = None;
         while let Ok(msg) = imp.rx.try_recv() {
             match msg {
                 Msg::Found(n) => imp.found += n,
                 Msg::Entries(entries) => {
                     for e in entries {
                         if imp.known.insert(e.path.clone()) {
-                            first_new.get_or_insert(self.playlist.len());
+                            first_hit.get_or_insert(self.playlist.len());
                             self.playlist.add_entry(e);
                             imp.added += 1;
+                        } else if imp.force_play && first_hit.is_none() {
+                            first_hit = self
+                                .playlist
+                                .entries()
+                                .iter()
+                                .position(|x| x.path == e.path);
                         }
                     }
                 }
                 Msg::Done => done = true,
             }
         }
-        if let Some(idx) = first_new
+        if let Some(idx) = first_hit
             && !imp.started_playback
         {
             imp.started_playback = true;

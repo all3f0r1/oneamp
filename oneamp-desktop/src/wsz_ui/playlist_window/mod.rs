@@ -141,6 +141,11 @@ pub(super) struct ParentSpec {
     pub(super) bar_x: u32,
     /// One action per row, top → bottom. `None` rows render but do nothing.
     pub(super) actions: &'static [Option<PlaylistAction>],
+    /// Hover hint for the parent button itself.
+    pub(super) tip: &'static str,
+    /// Hover tooltip per row, same order as `actions`: the sprites only
+    /// say "URL" / "CROP" / "MISC", which doesn't tell what they do.
+    pub(super) tips: &'static [&'static str],
 }
 
 pub(super) const PARENTS: [ParentSpec; 5] = [
@@ -148,17 +153,24 @@ pub(super) const PARENTS: [ParentSpec; 5] = [
         skin_x: 14,
         atlas_x: 0,
         bar_x: 48,
+        tip: "Add: URL, folder or files",
         // URL / DIR / FILE
         actions: &[
             Some(PlaylistAction::AddUrl),
             Some(PlaylistAction::AddDir),
             Some(PlaylistAction::AddFiles),
         ],
+        tips: &[
+            "Add a stream URL",
+            "Add a folder (with subfolders)",
+            "Add files",
+        ],
     },
     ParentSpec {
         skin_x: 43,
         atlas_x: 54,
         bar_x: 100,
+        tip: "Remove tracks",
         // ALL / CROP / SEL / MISC (Winamp's MISC menu → remove dead files)
         actions: &[
             Some(PlaylistAction::Clear),
@@ -166,34 +178,54 @@ pub(super) const PARENTS: [ParentSpec; 5] = [
             Some(PlaylistAction::RemoveSelected),
             Some(PlaylistAction::RemoveDead),
         ],
+        tips: &[
+            "Remove all tracks",
+            "Keep only selected tracks",
+            "Remove selected tracks",
+            "Remove missing files",
+        ],
     },
     ParentSpec {
         skin_x: 72,
         atlas_x: 104,
         bar_x: 150,
+        tip: "Selection",
         // INV / ZERO / ALL
         actions: &[
             Some(PlaylistAction::InvertSelection),
             Some(PlaylistAction::SelectNone),
             Some(PlaylistAction::SelectAll),
         ],
+        tips: &["Invert selection", "Select none", "Select all"],
     },
     ParentSpec {
         skin_x: 101,
         atlas_x: 154,
         bar_x: 200,
+        tip: "Sort and options",
         // SORT / FILE INF / MISC OPTS — the last two have no dialog yet.
         actions: &[Some(PlaylistAction::SortByTitle), None, None],
+        tips: &[
+            "Sort by title",
+            "File info (not available yet)",
+            "Options (not available yet)",
+        ],
     },
     ParentSpec {
         skin_x: 231,
         atlas_x: 204,
         bar_x: 250,
+        tip: "Playlist: new, save, load",
         // NEW / SAVE / LOAD
         actions: &[
             Some(PlaylistAction::Clear),
             Some(PlaylistAction::SaveM3u),
             Some(PlaylistAction::LoadM3u),
+        ],
+        tips: &[
+            "New playlist (clear)",
+            "Save playlist (M3U / PLS)",
+            "Load playlist (replaces current)",
         ],
     },
 ];
@@ -214,6 +246,19 @@ pub(super) enum MiniCommand {
     Stop,
     Next,
     Open,
+}
+
+impl MiniCommand {
+    pub(super) fn tip(self) -> &'static str {
+        match self {
+            Self::Previous => "Previous track",
+            Self::Play => "Play",
+            Self::Pause => "Pause",
+            Self::Stop => "Stop",
+            Self::Next => "Next track",
+            Self::Open => "Open files (replaces the playlist)",
+        }
+    }
 }
 
 pub(super) const MINI_TRANSPORT: [MiniTransport; 6] = [
@@ -459,6 +504,7 @@ impl PlaylistWindow {
                 self.render_submenu(ui, offset);
 
                 let btn_action = self.handle_input(ui, offset, audio_engine, entries.len());
+                self.render_tips(ui, offset);
                 if btn_action != PlaylistAction::None {
                     action = btn_action;
                 }

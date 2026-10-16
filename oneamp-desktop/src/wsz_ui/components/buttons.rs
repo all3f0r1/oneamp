@@ -43,6 +43,22 @@ impl WinampButton {
         }
     }
 
+    /// Hover hint (see `wsz_ui::tip`).
+    pub fn tip(&self) -> &'static str {
+        match self {
+            Self::Previous => "Previous track",
+            Self::Play => "Play",
+            Self::Pause => "Pause",
+            Self::Stop => "Stop",
+            Self::Next => "Next track",
+            Self::Eject => "Open files (replaces the playlist)",
+            Self::Shuffle => "Shuffle",
+            Self::Repeat => "Repeat: off / all / one",
+            Self::EqToggle => "Show / hide the equalizer",
+            Self::PlToggle => "Show / hide the playlist",
+        }
+    }
+
     /// Which atlas the sprite lives in. cbuttons.bmp for transport, shufrep.bmp
     /// for the four toggle buttons.
     pub fn source_atlas(&self) -> SkinComponent {
