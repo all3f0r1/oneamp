@@ -69,8 +69,10 @@ impl EditableTags {
             // back from one to the other and parsing the leading 4
             // digits if necessary.
             year: get_text(tag, ItemKey::Year)
-                .and_then(|s| parse_year(&s))
-                .or_else(|| get_text(tag, ItemKey::RecordingDate).and_then(|s| parse_year(&s))),
+                .and_then(|s| crate::parse_year(&s))
+                .or_else(|| {
+                    get_text(tag, ItemKey::RecordingDate).and_then(|s| crate::parse_year(&s))
+                }),
             tracknumber: get_text(tag, ItemKey::TrackNumber).and_then(|s| parse_tracknumber(&s)),
             comment: get_text(tag, ItemKey::Comment),
         }
@@ -173,22 +175,10 @@ fn parse_tracknumber(raw: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
-/// First 4-digit year inside a date-like string.
-pub(crate) fn parse_year(raw: &str) -> Option<u32> {
-    let bytes = raw.as_bytes();
-    let mut i = 0;
-    while i + 4 <= bytes.len() {
-        if bytes[i..i + 4].iter().all(|b| b.is_ascii_digit()) {
-            return std::str::from_utf8(&bytes[i..i + 4]).ok()?.parse().ok();
-        }
-        i += 1;
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parse_year;
 
     #[test]
     fn editable_tags_default_is_all_none() {

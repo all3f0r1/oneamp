@@ -1,14 +1,15 @@
 //! Audio-engine plumbing: routing playback requests, draining engine
-//! events back into the app, and the gapless pre-queue heuristic.
+//! events back into the app, and telling the engine what plays next.
 //!
 //! Kept separate from `app/mod.rs` so the audio-side wiring (event
 //! enum match arms, MPRIS / notification side-effects, request-next
 //! re-entrancy) can evolve without scrolling through hundreds of
 //! lines of UI dispatch.
 
-use super::{OneAmpApp, PlaybackState};
-use oneamp_core::AudioCommand;
-use std::path::PathBuf;
+use super::{OneAmpApp, PlaybackState, track_path};
+use oneamp_core::{AudioCommand, MediaDescriptor};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 impl OneAmpApp {
     /// Send `AudioCommand::Play(path)` to the audio engine and record the
@@ -18,15 +19,9 @@ impl OneAmpApp {
     /// next/prev navigation, …). The list is persisted on exit and
     /// reloaded on the next launch.
     pub(super) fn play_audio_path(&mut self, path: PathBuf) {
-        // Any in-flight gapless preload marker is stale the moment we
-        // start a brand-new track: the audio thread will either discard
-        // the preloaded decoder or finish swapping into it before
-        // honoring this Play. If we leave `pending_next_path` set, the
-        // upcoming `TrackLoaded` event for *this* path could spuriously
-        // match it (when Play happens to target the same path the
-        // preload pointed at) and double-advance `current_index` —
-        // leaving the playlist's "current row" pointing one track past
-        // what's actually audible.
+        // Whatever was prepared as the next track is moot: `Load` drops
+        // it on the engine side, and the marker must not match this
+        // load's `TrackLoaded` and double-advance `current_index`.
         self.pending_next_path = None;
         // Any user-initiated Play implicitly disarms "stop after
         // current" — the user clearly wants to keep playing past this
@@ -36,13 +31,14 @@ impl OneAmpApp {
         // we need to touch.
         self.stop_after_current = false;
         // Playlist rows that came from "Add URL…" store the URL in the
-        // PathBuf so the dedupe key stays unique. Route them through
-        // PlayUrl instead of Play — the file-open path would just fail
-        // with a "No such file" error.
-        let url = oneamp_core::is_stream_url(&path).then(|| path.to_string_lossy().into_owned());
-        if let Some(url) = url {
-            self.recent.add_file(path);
-            self.audio.send_command(AudioCommand::PlayUrl(url));
+        // PathBuf so the dedupe key stays unique; the descriptor turns
+        // them into an HTTP media whose identity is that URL.
+        if oneamp_core::is_stream_url(&path) {
+            self.recent.add_file(path.clone());
+            self.audio.send_command(AudioCommand::Load {
+                media: MediaDescriptor::from_path_or_url(&path),
+                paused: false,
+            });
             return;
         }
         // A restored entry whose file is gone (drive unplugged): say so
@@ -60,7 +56,44 @@ impl OneAmpApp {
             return;
         }
         self.recent.add_file(path.clone());
-        self.audio.send_command(AudioCommand::Play(path));
+        // Resume slots are applied as the start position: the engine
+        // reaches it before the first sample is output, so the beginning
+        // is never heard (the old seek-after-load let it through).
+        let mut media = MediaDescriptor::file(&path);
+        if let Some(start) = self.resume_position_for(&path) {
+            media = media.starting_at(Duration::from_secs_f32(start));
+            self.push_toast(
+                format!(
+                    "Resumed at {:02}:{:02}",
+                    (start as u32) / 60,
+                    (start as u32) % 60
+                ),
+                std::time::Duration::from_millis(1800),
+            );
+        }
+        self.audio.send_command(AudioCommand::Load {
+            media,
+            paused: false,
+        });
+    }
+
+    /// Where `path` should start: the restored session's playhead for the
+    /// track that was current at exit (once), else the long-file resume
+    /// slot when the user opted in.
+    fn resume_position_for(&mut self, path: &Path) -> Option<f32> {
+        if let Some((p, pos)) = self.session_resume.take()
+            && p == path
+        {
+            return Some(pos);
+        }
+        if !self.config.resume_long_files {
+            return None;
+        }
+        // Slots only exist for files past the long-file threshold
+        // (`maybe_persist_resume`), and are removed near the end.
+        self.resume
+            .get(path)
+            .filter(|&saved| saved >= crate::resume_store::RESUME_MIN_OFFSET_SECS)
     }
 
     /// Smart Play/Pause that mirrors the Space-key semantics in
@@ -184,8 +217,12 @@ impl OneAmpApp {
                 mpris.sync_audio_event(&event);
             }
             match &event {
-                oneamp_core::AudioEvent::Error(msg) => {
-                    crate::dialog_util::show_error(msg);
+                oneamp_core::AudioEvent::Error { error, .. } => {
+                    // Cancellations are the engine confirming a stop or a
+                    // replaced load, not something to tell the user.
+                    if error.category != oneamp_core::ErrorCategory::Cancelled {
+                        crate::dialog_util::show_error(&error.message);
+                    }
                 }
                 oneamp_core::AudioEvent::RequestNext => {
                     let next = self.playlist.next_entry().map(|e| e.path.clone());
@@ -206,7 +243,7 @@ impl OneAmpApp {
                     // TrackLoaded and is still pointing at the file
                     // that just ended.
                     if let Some(track) = self.state.current_track.as_ref() {
-                        self.resume.remove(&track.path);
+                        self.resume.remove(&track_path(track));
                     }
                     // "Stop after current" intercept: when armed, the user
                     // told us to halt at the end of this track. Disarm
@@ -243,20 +280,19 @@ impl OneAmpApp {
                 // event channel — the audio thread publishes directly
                 // into `AudioEngine`'s ArcSwap and UI consumers poll it
                 // each frame. See O17 in AUDIO_OBJECTIVES.md.
-                oneamp_core::AudioEvent::Position(current, total) => {
-                    self.maybe_queue_next_for_gapless(*current, *total);
-                    self.maybe_apply_resume(*current);
-                    self.maybe_persist_resume(*current, *total);
+                oneamp_core::AudioEvent::Position { position, duration } => {
+                    self.sync_next();
+                    let total = duration.map_or(0.0, |d| d.as_secs_f32());
+                    self.maybe_persist_resume(position.as_secs_f32(), total);
                 }
-                oneamp_core::AudioEvent::TrackLoaded(track) => {
-                    // If this was a gapless swap (path matches what we
-                    // pre-queued), advance the playlist's current_index to
-                    // match — the audio thread did the swap silently
-                    // without going through RequestNext. Otherwise just
-                    // clear the pending marker; user-initiated Play
-                    // already manages playlist state on its own.
+                oneamp_core::AudioEvent::TrackLoaded { track, .. } => {
+                    let path = track_path(track);
+                    // A gapless/crossfade transition to the track we told
+                    // the engine comes next: advance the playlist to match
+                    // (the engine switched without going through
+                    // RequestNext). Otherwise just clear the marker.
                     if let Some(pending) = self.pending_next_path.take()
-                        && pending == track.path
+                        && pending == path
                     {
                         self.playlist.next_entry();
                     }
@@ -266,37 +302,13 @@ impl OneAmpApp {
                     if self.config.track_notifications_enabled {
                         self.notifications.notify_track(track);
                     }
-                    // Resume-on-load: only for local files (HTTP streams
-                    // store their URL as a PathBuf — `to_str()` shows
-                    // `http://…`), only when the user opted in, and only
-                    // when the duration crosses the long-file threshold.
-                    // The actual Seek is deferred until the first
-                    // Position event so the audio thread is past its
-                    // load latency window.
-                    if self.config.resume_long_files
-                        && let Some(duration) = track.duration_secs
-                        && duration >= crate::resume_store::RESUME_MIN_DURATION_SECS
-                        && let Some(saved) = self.resume.get(&track.path)
-                        && saved >= crate::resume_store::RESUME_MIN_OFFSET_SECS
-                        && saved < duration - 5.0
-                        && !oneamp_core::is_stream_url(&track.path)
-                    {
-                        self.pending_resume = Some((track.path.clone(), saved));
-                    }
-                    // Restored session: the first load of the track that
-                    // was current at exit picks up where it stopped.
-                    if let Some((path, pos)) = self.session_resume.take()
-                        && path == track.path
-                    {
-                        self.pending_resume = Some((path, pos));
-                    }
-                    self.apply_eq_auto(&track.path);
+                    // EQ AUTO is resolved by the engine from the media id.
                     // A file that loads is available again.
                     if let Some(e) = self
                         .playlist
                         .entries_mut()
                         .iter_mut()
-                        .find(|e| e.path == track.path)
+                        .find(|e| e.path == path)
                     {
                         e.unavailable = false;
                     }
@@ -335,7 +347,6 @@ impl OneAmpApp {
                 }
                 _ => {}
             }
-            self.note_eq_update(&event);
             self.state.handle_audio_event(event.clone());
             events.push(event);
         }
@@ -408,42 +419,6 @@ impl OneAmpApp {
         }
     }
 
-    /// If `pending_resume` was set by the last TrackLoaded, fire the
-    /// Seek now that the audio thread is producing Position events
-    /// (i.e. the decoder is actually rolling). Drops the pending
-    /// marker after the first attempt — we never retry, partly so a
-    /// failed seek doesn't loop forever and partly because most
-    /// codecs that drop the first Seek will accept the next user-
-    /// driven one fine.
-    pub(super) fn maybe_apply_resume(&mut self, current_pos: f32) {
-        // Only act once the engine has actually started reporting
-        // position (i.e. the file is decoding). The current_pos cap
-        // dodges firing the seek before the codec has settled — at
-        // `t≈0` the decoder is sometimes still attaching its packet
-        // demuxer and a Seek lands in a blackhole.
-        if current_pos < 0.05 {
-            return;
-        }
-        let Some((path, saved)) = self.pending_resume.take() else {
-            return;
-        };
-        let cur = self.state.current_track.as_ref().map(|t| &t.path);
-        if cur != Some(&path) {
-            // The user already advanced past the long file before the
-            // engine got a chance to settle — abandon the resume.
-            return;
-        }
-        self.audio.send_command(AudioCommand::Seek(saved));
-        self.push_toast(
-            format!(
-                "Resumed at {:02}:{:02}",
-                (saved as u32) / 60,
-                (saved as u32) % 60
-            ),
-            std::time::Duration::from_millis(1800),
-        );
-    }
-
     /// Update the resume store with the current playhead position,
     /// throttled to once every `SAVE_INTERVAL_SECS`. Only writes for
     /// local files long enough to justify a resume slot; URLs and
@@ -460,7 +435,7 @@ impl OneAmpApp {
         let Some(track) = self.state.current_track.as_ref() else {
             return;
         };
-        let path = track.path.clone();
+        let path = track_path(track);
         if oneamp_core::is_stream_url(&path) {
             return;
         }
@@ -488,48 +463,31 @@ impl OneAmpApp {
         }
     }
 
-    /// Send `AudioCommand::QueueNext` for the upcoming playlist track when
-    /// the current one is in its last ~2 seconds (crossfade length + 1 s
-    /// with crossfade on). The audio thread uses
-    /// the preloaded decoder to swap into the running output stream
-    /// without rebuilding the device — that's the no-gap path. We only
-    /// queue when shuffle is off; under shuffle the "next" track depends
-    /// on a roll the audio thread does on its own, so guessing here
-    /// would queue the wrong track. Multi-track playlists only — for a
-    /// single track we'd just be re-queueing itself.
-    pub(super) fn maybe_queue_next_for_gapless(&mut self, current: f32, total: f32) {
-        if self.state.shuffle_enabled || total <= 0.0 {
-            return;
-        }
-        let remaining = total - current;
-        // Crossfade mixes the next track in from `duration_secs` before
-        // the end, so it has to be loaded (with a second to spare) by then.
-        let lead = if self.config.crossfade.enabled {
-            self.config.crossfade.duration_secs + 1.0
+    /// Keep the engine's "next media" in step with the playlist. The
+    /// engine prepares it ahead of time and joins it gaplessly (or
+    /// crossfades) on its own; this only says *what* comes next. No next
+    /// under shuffle (the playlist rolls at advance time), for a
+    /// one-track playlist, or at the end with Repeat off — the engine
+    /// then finishes and `Finished` decides.
+    pub(super) fn sync_next(&mut self) {
+        let wanted = if self.state.shuffle_enabled
+            || self.playlist.entries().len() < 2
+            || self.repeat_off_at_end()
+        {
+            None
         } else {
-            0.0
-        }
-        .max(2.0);
-        if !(0.0..lead).contains(&remaining) {
-            return;
-        }
-        // Never preload across the end of the playlist with Repeat off:
-        // the engine would swap gaplessly into track 1 instead of stopping.
-        if self.playlist.entries().len() < 2 || self.repeat_off_at_end() {
-            return;
-        }
-        let Some(idx) = self.playlist.peek_next_index() else {
-            return;
+            self.playlist
+                .peek_next_index()
+                .and_then(|i| self.playlist.entries().get(i))
+                .filter(|e| !e.unavailable)
+                .map(|e| e.path.clone())
         };
-        let Some(entry) = self.playlist.entries().get(idx) else {
-            return;
-        };
-        let path = entry.path.clone();
-        if self.pending_next_path.as_ref() == Some(&path) {
+        if wanted == self.pending_next_path {
             return;
         }
-        self.audio
-            .send_command(AudioCommand::QueueNext(path.clone()));
-        self.pending_next_path = Some(path);
+        self.audio.send_command(AudioCommand::SetNext(
+            wanted.as_deref().map(MediaDescriptor::from_path_or_url),
+        ));
+        self.pending_next_path = wanted;
     }
 }

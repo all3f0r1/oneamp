@@ -350,6 +350,17 @@ impl BiquadFilter {
         self.ramp_remaining > 0
     }
 
+    /// Finish any coefficient ramp at once (start of a new stream: there
+    /// is nothing to click against).
+    pub fn snap_to_target(&mut self) {
+        self.b0 = self.target_b0;
+        self.b1 = self.target_b1;
+        self.b2 = self.target_b2;
+        self.a1 = self.target_a1;
+        self.a2 = self.target_a2;
+        self.ramp_remaining = 0;
+    }
+
     /// Reset filter state (useful when changing tracks)
     pub fn reset(&mut self) {
         self.x1_l = 0.0;
@@ -365,7 +376,7 @@ impl BiquadFilter {
     /// Magnitude of this biquad's frequency response at `omega = 2π·f/sr`,
     /// evaluated from the *target* coefficients so that callers don't need
     /// to wait for the ramp to complete. Returns the linear |H(e^jω)|.
-    pub(crate) fn target_magnitude(&self, omega: f32) -> f32 {
+    pub fn target_magnitude(&self, omega: f32) -> f32 {
         let omega = omega as f64;
         let cos_w = omega.cos();
         let sin_w = omega.sin();
@@ -513,6 +524,13 @@ impl Equalizer {
     pub fn reset_state(&mut self) {
         for band in &mut self.bands {
             band.reset();
+        }
+    }
+
+    /// Finish every coefficient ramp at once.
+    pub fn snap_to_targets(&mut self) {
+        for band in &mut self.bands {
+            band.snap_to_target();
         }
     }
 

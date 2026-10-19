@@ -5,7 +5,9 @@
 //! directly, the UI polls; we just proxy the getters here so the rest
 //! of the desktop crate doesn't need to know about that detail.
 
-use oneamp_core::{AudioCommand, AudioEngine, AudioEvent, MeterSnapshot, WaveformSnapshot};
+use oneamp_core::{
+    AudioCommand, AudioEngine, AudioEvent, MeterSnapshot, PlaybackSnapshot, WaveformSnapshot,
+};
 use std::sync::Arc;
 
 pub struct AudioController {
@@ -38,6 +40,11 @@ impl AudioController {
         if let Some(ref engine) = self.engine {
             let _ = engine.send_command(cmd);
         }
+    }
+
+    /// The engine's coherent state snapshot (`None` without an engine).
+    pub fn snapshot(&self) -> Option<Arc<PlaybackSnapshot>> {
+        self.engine.as_ref().map(AudioEngine::snapshot)
     }
 
     pub fn try_recv_event(&self) -> Option<AudioEvent> {

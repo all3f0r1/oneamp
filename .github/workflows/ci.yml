@@ -125,6 +125,82 @@ jobs:
           PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig
         run: cargo test --doc --all --verbose
 
+  # The embeddable surfaces: feature subsets of oneamp-core, the
+  # WebAssembly processor (built for wasm32 and run in Node through the
+  # AudioWorklet glue), and the Kotlin/JNI bridge (cross-compiled for
+  # Android, and executed on a desktop JVM against a host build). No
+  # Android device or emulator runs here: see docs/embedding/matrix.md.
+  embedding:
+    name: Embedding (features, wasm, Android/Kotlin)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, aarch64-linux-android, x86_64-linux-android
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libasound2-dev
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-embedding-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: oneamp-core feature subsets
+        run: |
+          cargo check -p oneamp-core --no-default-features
+          cargo check -p oneamp-core --no-default-features --features player
+          cargo check -p oneamp-core --no-default-features --features player,http
+          cargo check -p oneamp-cli
+          cargo run -p oneamp-core --no-default-features --example pcm_processor
+
+      - name: WebAssembly processor
+        run: |
+          cargo build -p oneamp-wasm --target wasm32-unknown-unknown --release
+          node -e "const m=new WebAssembly.Module(require('fs').readFileSync('target/wasm32-unknown-unknown/release/oneamp_wasm.wasm')); if (WebAssembly.Module.imports(m).length) { console.error(WebAssembly.Module.imports(m)); process.exit(1) }"
+          node oneamp-wasm/www/test-worklet.mjs target/wasm32-unknown-unknown/release/oneamp_wasm.wasm
+
+      - name: Android cross-compilation (aarch64, x86_64)
+        run: |
+          TC="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CC_aarch64_linux_android="$TC/aarch64-linux-android24-clang"
+          export AR_aarch64_linux_android="$TC/llvm-ar"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TC/aarch64-linux-android24-clang"
+          export CC_x86_64_linux_android="$TC/x86_64-linux-android24-clang"
+          export AR_x86_64_linux_android="$TC/llvm-ar"
+          export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$TC/x86_64-linux-android24-clang"
+          cargo build -p oneamp-android --release --target aarch64-linux-android
+          cargo build -p oneamp-android --release --target x86_64-linux-android
+          for t in aarch64-linux-android x86_64-linux-android; do
+            n=$("$TC/llvm-nm" -D --defined-only "target/$t/release/liboneamp_android.so" | grep -c Java_org_oneamp)
+            echo "$t: $n JNI exports"; test "$n" -ge 20
+          done
+
+      - name: Install Java and Kotlin
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Kotlin bridge on a desktop JVM
+        run: |
+          curl -sSL -o kotlinc.zip https://github.com/JetBrains/kotlin/releases/download/v2.1.20/kotlin-compiler-2.1.20.zip
+          unzip -q kotlinc.zip -d "$RUNNER_TEMP"
+          cargo build -p oneamp-android
+          "$RUNNER_TEMP/kotlinc/bin/kotlinc" oneamp-android/kotlin oneamp-android/examples-kotlin -include-runtime -d target/oneamp-example.jar
+          java -Djava.library.path=target/debug -jar target/oneamp-example.jar oneamp-core/tests/fixtures/a.flac
+          (cd oneamp-core/tests/fixtures && python3 -m http.server 8765 --bind 127.0.0.1 &) && sleep 1
+          java -Djava.library.path=target/debug -jar target/oneamp-example.jar http://127.0.0.1:8765/a.mp3
+
   audit:
     name: Security Audit
     runs-on: ubuntu-latest

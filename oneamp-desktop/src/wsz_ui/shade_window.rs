@@ -313,7 +313,11 @@ impl ShadeWindow {
                     self.is_playing = false;
                     self.is_paused = false;
                 }
-                AudioEvent::Position(current, total) => {
+                AudioEvent::Position { position, duration } => {
+                    let (current, total) = (
+                        &position.as_secs_f32(),
+                        &duration.map_or(0.0, |d| d.as_secs_f32()),
+                    );
                     self.display.set_time(*current, *total);
                 }
                 AudioEvent::VolumeUpdated(vol, _) if !self.volume_slider.is_dragging => {

@@ -101,7 +101,7 @@ impl AppState {
     /// Update state from audio event
     pub fn handle_audio_event(&mut self, event: oneamp_core::AudioEvent) {
         match event {
-            oneamp_core::AudioEvent::TrackLoaded(track) => {
+            oneamp_core::AudioEvent::TrackLoaded { track, .. } => {
                 self.current_track = Some(track);
             }
             oneamp_core::AudioEvent::Playing => {
@@ -114,8 +114,11 @@ impl AppState {
                 self.playback = PlaybackState::Stopped;
                 self.position = (0.0, 0.0);
             }
-            oneamp_core::AudioEvent::Position(current, total) => {
-                self.position = (current, total);
+            oneamp_core::AudioEvent::Position { position, duration } => {
+                self.position = (
+                    position.as_secs_f32(),
+                    duration.map_or(0.0, |d| d.as_secs_f32()),
+                );
             }
             oneamp_core::AudioEvent::VolumeUpdated(vol, muted) => {
                 self.volume.level = vol;

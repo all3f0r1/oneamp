@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>OneAmp AudioWorklet</title>
+<!-- Serve this directory over http (e.g. `python3 -m http.server`) with
+     oneamp_wasm.wasm copied next to it; see ../README.md. -->
+<audio id="player" controls crossorigin="anonymous" src="tone.ogg"></audio>
+<fieldset>
+  <legend>EQ</legend>
+  <label><input id="eq" type="checkbox"> enabled</label>
+  <div id="bands"></div>
+  <label>preamp <input id="preamp" type="range" min="-12" max="12" step="0.5" value="0"></label>
+</fieldset>
+<script type="module">
+  import { createOneAmpNode } from './oneamp.js';
+  const FREQS = [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+  const audio = document.getElementById('player');
+  let oneamp;
+  audio.addEventListener('play', async () => {
+    if (oneamp) return;
+    const ctx = new AudioContext();
+    oneamp = await createOneAmpNode(ctx);
+    ctx.createMediaElementSource(audio).connect(oneamp.node).connect(ctx.destination);
+  });
+  document.getElementById('eq').onchange = (e) => oneamp?.setEqEnabled(e.target.checked);
+  document.getElementById('preamp').oninput = (e) => oneamp?.setPreamp(+e.target.value);
+  const bands = document.getElementById('bands');
+  FREQS.forEach((f, i) => {
+    const input = Object.assign(document.createElement('input'),
+      { type: 'range', min: -12, max: 12, step: 0.5, value: 0, title: `${f} Hz` });
+    input.oninput = () => oneamp?.setEqBand(i, +input.value);
+    bands.append(input);
+  });
+</script>

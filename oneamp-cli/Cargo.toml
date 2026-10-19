@@ -11,8 +11,9 @@ name = "oneamp-cli"
 path = "src/main.rs"
 
 [dependencies]
-# Audio playback (same engine as the desktop app)
-oneamp-core = { path = "../oneamp-core" }
+# Audio playback (same engine as the desktop app). Only the player,
+# HTTP and cpal: no skins, tag editing or desktop services.
+oneamp-core = { path = "../oneamp-core", default-features = false, features = ["player", "http", "cpal-output"] }
 
 # CLI argument parsing
 clap = { version = "4.5", features = ["derive"] }

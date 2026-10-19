@@ -184,7 +184,7 @@ impl WszMainWindow {
                 && self.display.total_time > 0.0
             {
                 let seek_time = progress * self.display.total_time;
-                let _ = engine.send_command(AudioCommand::Seek(seek_time));
+                let _ = engine.send_command(AudioCommand::seek_secs(seek_time));
             }
 
             if let Some(volume) = self.volume_slider.handle_drag(mouse_pos, offset, scale)
@@ -212,7 +212,7 @@ impl WszMainWindow {
                 if let Some(new_pos) = self.try_wheel_seek(scroll_y, 5.0)
                     && let Some(engine) = audio_engine
                 {
-                    let _ = engine.send_command(AudioCommand::Seek(new_pos));
+                    let _ = engine.send_command(AudioCommand::seek_secs(new_pos));
                 }
             }
 

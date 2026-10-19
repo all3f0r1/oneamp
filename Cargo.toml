@@ -1,8 +1,10 @@
 [workspace]
 members = [
+    "oneamp-android",
     "oneamp-cli",
     "oneamp-core",
     "oneamp-desktop",
+    "oneamp-wasm",
 ]
 resolver = "3"
 

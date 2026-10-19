@@ -138,6 +138,50 @@ impl From<RepeatMode> for RepeatModeConfig {
     }
 }
 
+impl AutoEqPreset {
+    pub fn curve(&self) -> oneamp_core::EqCurve {
+        oneamp_core::EqCurve::from_slice(&self.gains, self.preamp_db)
+    }
+}
+
+impl AppConfig {
+    /// The engine's settings document for this configuration. The
+    /// desktop keeps its own file format; this is the one place it is
+    /// translated into the core's versioned settings.
+    pub fn audio_settings(&self) -> oneamp_core::AudioSettings {
+        oneamp_core::AudioSettings {
+            volume: self.playback.volume,
+            muted: self.playback.muted,
+            balance: self.playback.balance,
+            eq_enabled: self.equalizer.enabled,
+            eq: oneamp_core::EqCurve::from_slice(&self.equalizer.gains, self.equalizer.preamp_db),
+            eq_auto: oneamp_core::settings::EqAutoSettings {
+                enabled: self.equalizer.auto,
+                presets: self
+                    .equalizer
+                    .auto_presets
+                    .iter()
+                    .map(|(k, p)| (k.clone(), p.curve()))
+                    .collect(),
+            },
+            // The menu only offers a mode (Off/Track/Album/Auto); picking
+            // one is what enables ReplayGain, as before.
+            replaygain_enabled: self.replaygain_mode != oneamp_core::ReplayGainMode::Off,
+            replaygain_mode: self.replaygain_mode,
+            loudness: self.loudness_enabled,
+            mono: self.mono_enabled,
+            crossfade: oneamp_core::settings::CrossfadeSettings {
+                enabled: self.crossfade.enabled,
+                seconds: self.crossfade.duration_secs,
+            },
+            repeat: self.playback.repeat_mode.into(),
+            output_device: self.output_device_name.clone(),
+            ..Default::default()
+        }
+        .sanitized()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AppConfig {
     /// Every field is `#[serde(default)]` so a config file written by

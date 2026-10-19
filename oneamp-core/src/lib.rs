@@ -1,272 +1,111 @@
-use anyhow::{Context, Result};
-use arc_swap::ArcSwap;
-use crossbeam_channel::{Receiver, Sender};
-use std::fs::File;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::thread;
-use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::{FormatOptions, TrackType};
-use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::MetadataOptions;
+//! OneAmp's audio core, embeddable.
+//!
+//! Two ways in:
+//!
+//! * **Full player** ([`AudioEngine`], feature `player`): give it
+//!   [`MediaDescriptor`]s — local files, on-demand or live HTTP with an
+//!   injectable [`access::AccessProvider`], or a byte source of your own —
+//!   and it decodes, buffers, processes, joins tracks gaplessly or
+//!   crossfades, and writes to an output you choose (cpal, a host pull
+//!   ring, memory for tests). No UI anywhere.
+//! * **PCM processor** ([`dsp::Processor`], always available): the same
+//!   EQ / preamp / ReplayGain / loudness / balance / mono / limiter
+//!   chain over blocks a platform player hands you. No thread, no
+//!   device, no network; builds for `wasm32-unknown-unknown`.
+//!
+//! See `docs/embedding/` in the repository for the responsibilities
+//! split, the capability matrix and the Tesserafin integration guide.
 
 pub mod atomic_write;
 pub mod audio_capture;
-pub mod audio_thread_symphonia;
+pub mod dsp;
 pub mod eqf;
 pub mod equalizer;
 pub mod equalizer_presets;
-pub mod http_stream;
-pub mod output;
+pub mod error;
+#[cfg(feature = "desktop")]
 pub mod playlist;
+pub mod queue;
+#[cfg(feature = "desktop")]
 pub mod recent_files;
-mod stream_player;
+pub mod settings;
+
+#[cfg(feature = "http")]
+pub mod access;
+#[cfg(feature = "player")]
+pub mod engine;
+#[cfg(feature = "http")]
+mod http_client;
+#[cfg(feature = "http")]
+pub mod http_range;
+#[cfg(feature = "http")]
+pub mod http_stream;
+#[cfg(feature = "player")]
+pub mod media;
+#[cfg(feature = "player")]
+pub mod output;
+#[cfg(feature = "player")]
+pub mod resample;
+#[cfg(feature = "player")]
+mod source;
+#[cfg(feature = "player")]
 pub mod symphonia_player;
+#[cfg(feature = "tags")]
 pub mod tag_editor;
+#[cfg(feature = "player")]
+pub mod track;
+#[cfg(feature = "player")]
+mod visualization;
+#[cfg(feature = "player")]
+mod worker;
+#[cfg(feature = "skins")]
 pub mod wsz;
 
 pub use atomic_write::write_atomic;
 pub use audio_capture::AudioCaptureBuffer;
-/// Highest master volume: 1.5 = 150 % (+3.5 dB). The part above 1.0 is
-/// applied ahead of the engine's limiter, so loud masters are limited
-/// rather than clipped.
-pub const MAX_VOLUME: f32 = 1.5;
-
+pub use dsp::{ListeningContext, MAX_VOLUME, MediaGain, ReplayGainMode};
 pub use equalizer::{EQ_MAX_DB, Equalizer};
 pub use equalizer_presets::{BuiltinPresets, EQ_FREQUENCIES, EqualizerPreset, PresetManager};
-pub use http_stream::is_stream_url;
-pub use output::list_output_devices;
+pub use error::{ErrorCategory, PlayerError};
+#[cfg(feature = "desktop")]
 pub use playlist::{Playlist, PlaylistEntry, SortOrder};
+pub use queue::PlayQueue;
+#[cfg(feature = "desktop")]
 pub use recent_files::{RecentFile, RecentFiles};
+pub use settings::{AudioSettings, EqCurve, RepeatMode};
 
-/// Repeat mode for playlist playback
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RepeatMode {
-    /// No repeat - stop at end of playlist
-    Off,
-    /// Repeat current track
-    One,
-    /// Repeat all tracks in playlist
-    All,
-}
+#[cfg(feature = "http")]
+pub use access::{Access, AccessProvider, RenewReason, StaticAccess};
+#[cfg(feature = "player")]
+pub use engine::{
+    AudioCommand, AudioEngine, AudioEvent, CommandId, EngineConfig, OutputPolicy, PlaybackInstance,
+    PlaybackSnapshot, PlayerState, SendError,
+};
+#[cfg(feature = "http")]
+pub use http_client::HttpConfig;
+#[cfg(feature = "http")]
+pub use http_stream::is_stream_url;
+#[cfg(feature = "player")]
+pub use media::{
+    CancelToken, Delivery, MediaDescriptor, MediaId, MediaLocation, MediaMetadata, SourceFactory,
+};
+#[cfg(feature = "cpal-output")]
+pub use output::cpal::list_output_devices;
+#[cfg(feature = "player")]
+pub use track::TrackInfo;
 
-/// Which ReplayGain figure (if any) the audio thread applies on top of
-/// the user's preamp. Album and track gains are both parsed from the
-/// file's metadata into [`TrackInfo`]; this picks which one is summed
-/// into the per-sample gain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum ReplayGainMode {
-    /// No ReplayGain — the user's preamp is applied alone.
-    Off,
-    /// Use `REPLAYGAIN_TRACK_GAIN` (per-track normalization). This is
-    /// the default and matches the historical `replaygain_enabled=true`
-    /// behaviour.
-    #[default]
-    Track,
-    /// Use `REPLAYGAIN_ALBUM_GAIN` (per-album normalization — keeps the
-    /// relative loudness of tracks within an album intact). Falls back
-    /// to no gain when the album tag is absent.
-    Album,
-    /// Prefer album gain when present, otherwise fall back to track gain.
-    /// The "do the right thing" mode for mixed libraries.
-    Auto,
-}
-
-impl ReplayGainMode {
-    /// Resolve the effective gain (in dB) for a track under this mode.
-    /// Returns `0.0` when the mode is `Off` or the relevant tag is
-    /// missing — summing zero leaves the user's preamp untouched.
-    ///
-    /// `Auto` uses album gain when present, else track gain. `Album`
-    /// uses album gain only (no track fallback — picking track gain
-    /// there would defeat the point of album normalization). `Track`
-    /// uses track gain only.
-    pub fn gain_db(self, track_gain_db: Option<f32>, album_gain_db: Option<f32>) -> f32 {
-        match self {
-            ReplayGainMode::Off => 0.0,
-            ReplayGainMode::Track => track_gain_db.unwrap_or(0.0),
-            ReplayGainMode::Album => album_gain_db.unwrap_or(0.0),
-            ReplayGainMode::Auto => album_gain_db.or(track_gain_db).unwrap_or(0.0),
+/// First 4-digit run in a date-ish tag (`"1994-07-15"`, `"(1994)"`).
+#[cfg(any(feature = "player", feature = "tags"))]
+pub(crate) fn parse_year(raw: &str) -> Option<u32> {
+    let bytes = raw.as_bytes();
+    let mut i = 0;
+    while i + 4 <= bytes.len() {
+        if bytes[i..i + 4].iter().all(|b| b.is_ascii_digit()) {
+            return std::str::from_utf8(&bytes[i..i + 4]).ok()?.parse().ok();
         }
+        i += 1;
     }
-}
-
-/// Commands that can be sent to the audio thread
-#[derive(Debug, Clone)]
-pub enum AudioCommand {
-    /// Load and play a file
-    Play(PathBuf),
-    /// Load and play an HTTP(S) audio URL (internet radio, podcast).
-    /// The audio thread opens an `HttpStream`, wraps it in
-    /// symphonia's `MediaSourceStream`, and starts playback. Seek
-    /// commands during URL playback are no-ops — the stream isn't
-    /// seekable. ICY metadata (`StreamTitle`) is bridged back to the
-    /// app via [`AudioEvent::IcyMetadata`].
-    PlayUrl(String),
-    /// Pre-load the next track for gapless transition. The audio thread
-    /// decodes header + first packet ahead of time, and on end-of-stream
-    /// swaps it into the running output stream without rebuilding the
-    /// device — provided sample_rate and channels match the current
-    /// output. Format mismatch falls back to the standard `RequestNext`
-    /// path. App side should send this once when the current track is
-    /// within ~2 s of its end.
-    QueueNext(PathBuf),
-    /// Pause playback
-    Pause,
-    /// Resume playback
-    Resume,
-    /// Stop playback
-    Stop,
-    /// Seek to a position (in seconds)
-    Seek(f32),
-    /// Play next track in playlist
-    Next,
-    /// Play previous track in playlist
-    Previous,
-    /// Set volume (0.0 to [`MAX_VOLUME`]; 1.0 = unity gain)
-    SetVolume(f32),
-    /// Set stereo balance (-1.0 = full left, 0.0 = center, 1.0 = full right)
-    SetBalance(f32),
-    /// Set mute state
-    SetMute(bool),
-    /// Set repeat mode
-    SetRepeatMode(RepeatMode),
-    /// Arm/disarm "stop after current track". While armed, the engine
-    /// drops any preloaded next track, ignores `QueueNext`, and at end of
-    /// stream emits `Finished` instead of repeating, gapless-swapping or
-    /// requesting the next track. Consumed at end of stream; cleared by
-    /// `Play`, `PlayUrl` and `Stop`.
-    SetStopAfterCurrent(bool),
-    /// Enable/disable shuffle mode
-    SetShuffle(bool),
-    /// Set equalizer enabled state
-    SetEqualizerEnabled(bool),
-    /// Set equalizer band gain (band_index, gain_db)
-    SetEqualizerBand(usize, f32),
-    /// Set all equalizer bands at once
-    SetEqualizerBands(Vec<f32>),
-    /// Reset equalizer to flat response
-    ResetEqualizer,
-    /// Set the master pre-amp gain in dB (applied after EQ band processing).
-    /// Range matches the band sliders (±20 dB).
-    SetEqualizerPreamp(f32),
-    /// Enable or disable equal-power crossfade between same-format tracks.
-    /// The float is the fade duration in seconds (range 0.5..30.0). When
-    /// `enabled` is false the duration is kept on the engine but unused,
-    /// so toggling back on doesn't reset the user's choice.
-    SetCrossfade(bool, f32),
-    /// Enable or disable ReplayGain-driven gain normalization. When on,
-    /// the audio thread adds the current track's `REPLAYGAIN_TRACK_GAIN`
-    /// (from `TrackInfo`) onto the user's preamp setting before applying
-    /// gain. Off restores the user's preamp alone — the user's slider
-    /// setting never gets overwritten.
-    ///
-    /// Kept for backward compatibility: `false` maps to
-    /// [`ReplayGainMode::Off`], `true` restores the engine's current
-    /// mode (default [`ReplayGainMode::Track`]). Prefer
-    /// [`AudioCommand::SetReplayGainMode`] for track/album/auto control.
-    SetReplayGainEnabled(bool),
-    /// Choose which ReplayGain figure the audio thread applies (off /
-    /// track / album / auto). Supersedes the boolean
-    /// [`AudioCommand::SetReplayGainEnabled`] toggle — the engine
-    /// re-derives the active track's gain immediately so the mode takes
-    /// effect on the currently-playing track without waiting for the
-    /// next `TrackLoaded`.
-    SetReplayGainMode(ReplayGainMode),
-    /// Downmix stereo to mono on the fly. When `true`, every stereo frame
-    /// is collapsed to the channel average and written back to both
-    /// channels, so the output stays stereo-shaped (two identical
-    /// channels) but plays mono. No-op on already-mono content. Off by
-    /// default; mirrors Winamp's mono toggle.
-    SetMono(bool),
-    /// Enable or disable loudness compensation (Fletcher-Munson /
-    /// ISO 226 inspired). When on, the audio thread applies a
-    /// volume-dependent V-curve EQ — low- and high-shelf gain scales
-    /// up as the master volume drops, so the perceived tonal balance
-    /// stays roughly constant at quiet listening levels. Off restores
-    /// flat shelves.
-    SetLoudnessEnabled(bool),
-    /// Choose which cpal output device the next track-load should open
-    /// on. `None` means "use the host default" (typical case — system
-    /// PulseAudio / PipeWire sink). The audio thread applies this on
-    /// the next `Play` / gapless preload — switching mid-track would
-    /// require tearing down the live cpal stream, which is out of
-    /// scope for v1. Names come from `oneamp_core::list_output_devices`.
-    SetOutputDevice(Option<String>),
-    /// Shutdown the audio thread
-    Shutdown,
-}
-
-/// Events sent from the audio thread to the GUI
-#[derive(Debug, Clone)]
-pub enum AudioEvent {
-    /// Track loaded successfully with metadata
-    TrackLoaded(TrackInfo),
-    /// Playback started
-    Playing,
-    /// Playback paused
-    Paused,
-    /// Playback stopped
-    Stopped,
-    /// Playback position update (current_secs, total_secs)
-    Position(f32, f32),
-    /// Playback finished (track ended)
-    Finished,
-    /// Request next track from playlist
-    RequestNext,
-    /// Request previous track from playlist
-    RequestPrevious,
-    /// Equalizer state updated (enabled, gains)
-    EqualizerUpdated(bool, Vec<f32>),
-    /// Master EQ pre-amp gain (dB) updated.
-    EqualizerPreampUpdated(f32),
-    /// Volume updated (current_volume, is_muted)
-    VolumeUpdated(f32, bool),
-    /// Balance updated (-1.0 to 1.0)
-    BalanceUpdated(f32),
-    /// ReplayGain toggle was acknowledged by the audio thread. The
-    /// bool mirrors the new state; UIs can use this as a confirmation
-    /// signal instead of guessing the engine accepted the command.
-    ReplayGainUpdated(bool),
-    /// Loudness compensation toggle acknowledged by the audio thread.
-    LoudnessUpdated(bool),
-    /// Output device selection acknowledged. `None` means "default host
-    /// device"; `Some(name)` matches what `list_output_devices` returned
-    /// at pick time. The new device only takes effect on the next track
-    /// load — the current Sink is left running so live audio doesn't drop.
-    OutputDeviceUpdated(Option<String>),
-    /// ICY `StreamTitle` parsed from the live HTTP stream. Fires once
-    /// per new title — the audio thread polls the `HttpStream`'s arc-
-    /// swap snapshot every position-update tick and forwards changes.
-    /// UI surfaces this as the title-bar text and (optionally) as a
-    /// desktop notification.
-    IcyMetadata(String),
-    /// HTTP stream is attempting to reconnect after an upstream blip.
-    /// `attempt` counts up from 1; the audio thread emits this on
-    /// every transition picked up from the `HttpStream::reconnect_state`
-    /// snapshot. The UI shows a transient toast so the user knows the
-    /// silence isn't a player-side hang.
-    StreamReconnecting { attempt: u32 },
-    /// HTTP stream came back online after one or more reconnect
-    /// attempts. Fired exactly once per reconnect sequence.
-    StreamReconnected,
-    /// HTTP stream gave up after exhausting the reconnect backoff
-    /// budget. The decoder thread will surface a hard error right
-    /// after this; the UI uses this event for the "stream lost"
-    /// toast so we don't show two stacked dialogs.
-    StreamReconnectFailed,
-    /// Repeat mode updated
-    RepeatModeUpdated(RepeatMode),
-    /// Shuffle mode updated
-    ShuffleUpdated(bool),
-    // Note: spectrum + waveform are NOT events anymore — they're polled
-    // off the engine via `AudioEngine::latest_spectrum()` /
-    // `latest_waveform()`, backed by `ArcSwap`. v1 sent them through
-    // the unbounded event channel; a slow UI would queue them up
-    // forever (audio thread allocates, UI never catches up). See
-    // O17 in AUDIO_OBJECTIVES.md.
-    /// Error occurred
-    Error(String),
+    None
 }
 
 /// One frame of pre-decimated oscilloscope data, paired (min, max) per
@@ -340,515 +179,9 @@ impl MeterSnapshot {
     }
 }
 
-/// Track metadata information
-#[derive(Debug, Clone)]
-pub struct TrackInfo {
-    pub path: PathBuf,
-    pub title: Option<String>,
-    pub artist: Option<String>,
-    pub album: Option<String>,
-    pub duration_secs: Option<f32>,
-    pub sample_rate: Option<u32>,
-    pub channels: Option<u8>,
-    /// Audio codec format (e.g., "MP3", "FLAC", "OGG", "WAV")
-    pub codec: Option<String>,
-    /// Bitrate in bits per second (bps) — divide by 1000 for kbps display.
-    pub bitrate: Option<u32>,
-    /// Track number from ID3v2 `TRCK` / Vorbis `TRACKNUMBER`. Many
-    /// taggers write `"3/12"` (track 3 of 12); we keep only the leading
-    /// integer so the playlist formatter doesn't have to redo the parse.
-    pub tracknumber: Option<u32>,
-    /// 4-digit release year, parsed from ID3v2 `TDRC` / `TYER` or Vorbis
-    /// `DATE`. We strip non-digit prefixes so `"1994-07-15"` and
-    /// `"(1994)"` both surface 1994.
-    pub year: Option<u32>,
-    /// Genre tag — taken verbatim from metadata. Numeric ID3v1 genre
-    /// codes (`"(17)"`) are not resolved here; that's the tagger's job.
-    pub genre: Option<String>,
-    /// ReplayGain track-level gain in dB, parsed from the file's metadata
-    /// (`REPLAYGAIN_TRACK_GAIN` in ID3v2 TXXX / Vorbis comments, `R128_TRACK_GAIN`
-    /// in Opus). `None` when the tag is absent or malformed. Applied
-    /// downstream as a multiplicative gain on every sample when the user
-    /// enables ReplayGain. We deliberately do *not* fall back to the album
-    /// gain here — clients can decide which they want.
-    pub replaygain_track_gain_db: Option<f32>,
-    /// ReplayGain album-level gain in dB. Same source, different tag key.
-    /// Kept here so a future "album mode" can pick it without re-parsing.
-    pub replaygain_album_gain_db: Option<f32>,
-}
-
-/// Parse a ReplayGain tag value (`REPLAYGAIN_TRACK_GAIN`, `R128_TRACK_GAIN`,
-/// etc.) into a dB float. Tag values vary across taggers — the spec calls
-/// for `"-6.78 dB"` but in practice we also see `"-6.78"`, `"+1.23 dB "`,
-/// case-mixed `"DB"`, and stray whitespace. Returns `None` on malformed
-/// input rather than guessing a default — silently substituting 0 dB
-/// would let a broken tag mask itself as "no gain needed".
-fn parse_replaygain_db(raw: &str) -> Option<f32> {
-    let trimmed = raw.trim();
-    // Strip a trailing "dB" / "DB" / "db" if present. Measure the suffix
-    // in *chars*, not a fixed byte offset — `trimmed[len - 2..]` panics
-    // whenever the string ends with a multi-byte UTF-8 character (e.g. a
-    // stray "é" from a mistagged file), since a raw byte offset can land
-    // mid-codepoint.
-    let suffix_len: usize = trimmed.chars().rev().take(2).map(char::len_utf8).sum();
-    let tail = &trimmed[trimmed.len() - suffix_len..];
-    let numeric = if tail.eq_ignore_ascii_case("db") {
-        trimmed[..trimmed.len() - suffix_len].trim()
-    } else {
-        trimmed
-    };
-    numeric.parse::<f32>().ok().filter(|v| v.is_finite())
-}
-
-impl TrackInfo {
-    /// Extract metadata from a file
-    pub fn from_file(path: &PathBuf) -> Result<Self> {
-        let file = File::open(path).context("Failed to open audio file for metadata reading")?;
-
-        let mss = MediaSourceStream::new(Box::new(file), Default::default());
-
-        let mut hint = Hint::new();
-        if let Some(ext) = path.extension() {
-            hint.with_extension(ext.to_str().unwrap_or(""));
-        }
-
-        let mut format = symphonia::default::get_probe()
-            .probe(
-                &hint,
-                mss,
-                FormatOptions::default(),
-                MetadataOptions::default(),
-            )
-            .context("Failed to probe audio file")?;
-
-        // The probe folds leading (ID3v2) and trailing (ID3v1, APE) tags
-        // into the reader's metadata log ahead of container metadata, so
-        // walking the revisions oldest-first keeps ID3v2 as the source of
-        // truth on duplicates.
-        let mut tags = TagAccumulator::default();
-        {
-            let mut metadata = format.metadata();
-            while let Some(rev) = metadata.pop() {
-                tags.consume(&rev);
-            }
-            if let Some(rev) = metadata.current() {
-                tags.consume(rev);
-            }
-        }
-
-        let mut sample_rate = None;
-        let mut channels = None;
-        let mut duration_secs = None;
-        let mut codec = None;
-
-        if let Some(track) = format.default_track(TrackType::Audio) {
-            let params = track.codec_params.as_ref().and_then(|p| p.audio());
-            if let Some(params) = params {
-                sample_rate = params.sample_rate;
-                channels = params.channels.as_ref().map(|c| c.count() as u8);
-                codec = Some(codec_label(params.codec));
-            }
-            if let (Some(n_frames), Some(sr)) = (track.num_frames, sample_rate) {
-                duration_secs = Some(n_frames as f32 / sr as f32);
-            }
-        }
-
-        // Symphonia's CodecParameters doesn't surface bitrate directly. Fall
-        // back to file_size × 8 / duration — this gives the average bitrate
-        // (exact for CBR, approximate for VBR), which is what Winamp shows in
-        // its 3-digit field anyway.
-        let bitrate = duration_secs.and_then(|secs| {
-            if secs <= 0.0 {
-                return None;
-            }
-            let file_size = std::fs::metadata(path).ok()?.len();
-            Some(((file_size as f64 * 8.0) / secs as f64).round() as u32)
-        });
-
-        Ok(TrackInfo {
-            path: path.clone(),
-            title: tags.title,
-            artist: tags.artist,
-            album: tags.album,
-            tracknumber: tags.tracknumber,
-            year: tags.year,
-            genre: tags.genre,
-            replaygain_track_gain_db: tags.rg_track,
-            replaygain_album_gain_db: tags.rg_album,
-            duration_secs,
-            sample_rate,
-            channels,
-            codec,
-            bitrate,
-        })
-    }
-}
-
-/// Scratch buffer used by `TrackInfo::from_file` to merge metadata from
-/// multiple revisions (ID3v2 probe-level then container-level). Kept as
-/// a struct so adding a new tag means one field + one match arm and
-/// nothing else.
-#[derive(Default)]
-struct TagAccumulator {
-    title: Option<String>,
-    artist: Option<String>,
-    album: Option<String>,
-    tracknumber: Option<u32>,
-    year: Option<u32>,
-    genre: Option<String>,
-    rg_track: Option<f32>,
-    rg_album: Option<f32>,
-}
-
-impl TagAccumulator {
-    fn consume(&mut self, rev: &symphonia::core::meta::MetadataRevision) {
-        use symphonia::core::meta::StandardTag;
-        fn set(slot: &mut Option<String>, v: &str) {
-            if slot.is_none() {
-                *slot = Some(v.to_string());
-            }
-        }
-        for tag in &rev.media.tags {
-            match &tag.std {
-                Some(StandardTag::TrackTitle(v)) => set(&mut self.title, v),
-                Some(StandardTag::Artist(v)) => set(&mut self.artist, v),
-                Some(StandardTag::Album(v)) => set(&mut self.album, v),
-                Some(StandardTag::Genre(v)) => set(&mut self.genre, v),
-                Some(StandardTag::TrackNumber(n)) if self.tracknumber.is_none() => {
-                    self.tracknumber = u32::try_from(*n).ok();
-                }
-                Some(
-                    StandardTag::RecordingDate(v)
-                    | StandardTag::ReleaseDate(v)
-                    | StandardTag::OriginalRecordingDate(v)
-                    | StandardTag::OriginalReleaseDate(v),
-                ) if self.year.is_none() => {
-                    self.year = tag_editor::parse_year(v);
-                }
-                Some(
-                    StandardTag::RecordingYear(y)
-                    | StandardTag::ReleaseYear(y)
-                    | StandardTag::OriginalReleaseYear(y),
-                ) if self.year.is_none() => {
-                    self.year = Some(u32::from(*y));
-                }
-                Some(StandardTag::ReplayGainTrackGain(v)) if self.rg_track.is_none() => {
-                    self.rg_track = parse_replaygain_db(v);
-                }
-                Some(StandardTag::ReplayGainAlbumGain(v)) if self.rg_album.is_none() => {
-                    self.rg_album = parse_replaygain_db(v);
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
-/// Short uppercase codec label for the UI readout ("FLAC", "MP3", …).
-fn codec_label(codec: symphonia::core::codecs::audio::AudioCodecId) -> String {
-    symphonia::default::get_codecs()
-        .get_audio_decoder(codec)
-        .map(|d| d.codec.info.short_name.to_uppercase())
-        .unwrap_or_else(|| codec.to_string().to_uppercase())
-}
-
-/// Audio engine that runs in a separate thread
-pub struct AudioEngine {
-    command_tx: Sender<AudioCommand>,
-    event_rx: Receiver<AudioEvent>,
-    thread_handle: Option<thread::JoinHandle<()>>,
-    /// Latest spectrum bins published by the audio thread. The audio
-    /// thread `store()`s a fresh `Arc<Vec<f32>>` on each visualization
-    /// refresh (~30 fps); UI consumers read via [`latest_spectrum`]
-    /// and get a cheap `Arc::clone`. Wait-free in both directions.
-    spectrum: Arc<ArcSwap<Vec<f32>>>,
-    /// Latest oscilloscope snapshot. Same publication model as
-    /// [`spectrum`]; the audio thread already produces a phase-stable
-    /// frame (zero-crossing trigger + min/max decimation).
-    waveform: Arc<ArcSwap<WaveformSnapshot>>,
-    /// Latest peak/RMS meter snapshot. Same wait-free publication as
-    /// the other visu channels — audio thread `store()`s once per
-    /// refresh, UI reads via [`latest_meter`].
-    meter: Arc<ArcSwap<MeterSnapshot>>,
-}
-
-impl AudioEngine {
-    /// Create a new audio engine
-    pub fn new() -> Result<Self> {
-        let (command_tx, command_rx) = crossbeam_channel::unbounded();
-        let (event_tx, event_rx) = crossbeam_channel::unbounded();
-
-        let spectrum = Arc::new(ArcSwap::from_pointee(Vec::new()));
-        let waveform = Arc::new(ArcSwap::from_pointee(WaveformSnapshot::empty()));
-        let meter = Arc::new(ArcSwap::from_pointee(MeterSnapshot::silent()));
-        let spectrum_for_thread = spectrum.clone();
-        let waveform_for_thread = waveform.clone();
-        let meter_for_thread = meter.clone();
-
-        let thread_handle = thread::spawn(move || {
-            if let Err(e) = audio_thread_symphonia::audio_thread_main_symphonia(
-                command_rx,
-                event_tx,
-                spectrum_for_thread,
-                waveform_for_thread,
-                meter_for_thread,
-            ) {
-                eprintln!("Audio thread error: {}", e);
-            }
-        });
-
-        Ok(AudioEngine {
-            command_tx,
-            event_rx,
-            thread_handle: Some(thread_handle),
-            spectrum,
-            waveform,
-            meter,
-        })
-    }
-
-    /// Send a command to the audio thread
-    pub fn send_command(&self, cmd: AudioCommand) -> Result<()> {
-        self.command_tx
-            .send(cmd)
-            .context("Failed to send command to audio thread")
-    }
-
-    /// Try to receive an event from the audio thread (non-blocking)
-    pub fn try_recv_event(&self) -> Option<AudioEvent> {
-        self.event_rx.try_recv().ok()
-    }
-
-    /// Cheap snapshot of the latest 16-bin spectrum. Returns an empty
-    /// `Vec` until the audio thread has published its first frame.
-    pub fn latest_spectrum(&self) -> Arc<Vec<f32>> {
-        self.spectrum.load_full()
-    }
-
-    /// Cheap snapshot of the latest oscilloscope frame. Returns an
-    /// empty [`WaveformSnapshot`] until the first audio thread publish.
-    pub fn latest_waveform(&self) -> Arc<WaveformSnapshot> {
-        self.waveform.load_full()
-    }
-
-    /// Cheap snapshot of the latest peak/RMS meter values. Returns
-    /// [`MeterSnapshot::silent`] until the first audio thread publish.
-    pub fn latest_meter(&self) -> Arc<MeterSnapshot> {
-        self.meter.load_full()
-    }
-
-    /// Shutdown the audio engine
-    pub fn shutdown(mut self) -> Result<()> {
-        self.send_command(AudioCommand::Shutdown)?;
-        if let Some(handle) = self.thread_handle.take() {
-            handle
-                .join()
-                .map_err(|_| anyhow::anyhow!("Failed to join audio thread"))?;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for AudioEngine {
-    fn drop(&mut self) {
-        let _ = self.command_tx.send(AudioCommand::Shutdown);
-        if let Some(handle) = self.thread_handle.take() {
-            // Bounded wait: a thread stuck in blocking I/O (stream
-            // connect, stalled read) must not hang app exit. Past the
-            // deadline the thread is detached; process exit reaps it.
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            while !handle.is_finished() && std::time::Instant::now() < deadline {
-                std::thread::sleep(std::time::Duration::from_millis(10));
-            }
-            if handle.is_finished() {
-                let _ = handle.join();
-            } else {
-                eprintln!("audio thread did not stop within 2 s; detaching");
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_replaygain_db_handles_real_world_inputs() {
-        // Canonical spec form, with explicit unit.
-        assert_eq!(parse_replaygain_db("-6.78 dB"), Some(-6.78));
-        // Positive sign + unit.
-        assert_eq!(parse_replaygain_db("+1.23 dB"), Some(1.23));
-        // No unit (some taggers omit it).
-        assert_eq!(parse_replaygain_db("-3.5"), Some(-3.5));
-        // Uppercase / mixed-case unit.
-        assert_eq!(parse_replaygain_db("-2.0 DB"), Some(-2.0));
-        assert_eq!(parse_replaygain_db("0.0 Db"), Some(0.0));
-        // Stray whitespace.
-        assert_eq!(parse_replaygain_db("  -4.4 dB  "), Some(-4.4));
-        // Garbage / empty returns None instead of guessing zero.
-        assert_eq!(parse_replaygain_db("not a number"), None);
-        assert_eq!(parse_replaygain_db(""), None);
-        assert_eq!(parse_replaygain_db("dB"), None);
-        // Non-finite floats are rejected so the gain stage can't NaN.
-        assert_eq!(parse_replaygain_db("inf"), None);
-        assert_eq!(parse_replaygain_db("NaN dB"), None);
-    }
-
-    #[test]
-    fn parse_replaygain_db_does_not_panic_on_multibyte_suffix() {
-        // A trailing multi-byte UTF-8 char must never panic when the
-        // suffix check probes the last two chars — regression for a
-        // byte-offset slice that used to land mid-codepoint.
-        assert_eq!(parse_replaygain_db("é"), None);
-        assert_eq!(parse_replaygain_db("-6.78 é"), None);
-        assert_eq!(parse_replaygain_db("日"), None);
-        // Single-char and empty-after-trim inputs must not panic either.
-        assert_eq!(parse_replaygain_db("d"), None);
-        assert_eq!(parse_replaygain_db(" "), None);
-    }
-
-    #[test]
-    fn replaygain_mode_default_is_track() {
-        assert_eq!(ReplayGainMode::default(), ReplayGainMode::Track);
-    }
-
-    #[test]
-    fn replaygain_mode_gain_selection() {
-        // Off ignores both tags.
-        assert_eq!(ReplayGainMode::Off.gain_db(Some(-6.0), Some(-3.0)), 0.0);
-
-        // Track uses the track tag only.
-        assert_eq!(ReplayGainMode::Track.gain_db(Some(-6.0), Some(-3.0)), -6.0);
-        assert_eq!(ReplayGainMode::Track.gain_db(None, Some(-3.0)), 0.0);
-
-        // Album uses the album tag only, no track fallback.
-        assert_eq!(ReplayGainMode::Album.gain_db(Some(-6.0), Some(-3.0)), -3.0);
-        assert_eq!(ReplayGainMode::Album.gain_db(Some(-6.0), None), 0.0);
-
-        // Auto prefers album, falls back to track, then to zero.
-        assert_eq!(ReplayGainMode::Auto.gain_db(Some(-6.0), Some(-3.0)), -3.0);
-        assert_eq!(ReplayGainMode::Auto.gain_db(Some(-6.0), None), -6.0);
-        assert_eq!(ReplayGainMode::Auto.gain_db(None, None), 0.0);
-    }
-
-    #[test]
-    fn test_audio_engine_creation() {
-        // Test that AudioEngine can be created
-        let engine = AudioEngine::new();
-        assert!(engine.is_ok(), "AudioEngine should be created successfully");
-    }
-
-    #[test]
-    fn latest_spectrum_starts_empty_and_is_cheap_to_clone() {
-        let engine = AudioEngine::new().expect("engine should construct");
-        let a = engine.latest_spectrum();
-        let b = engine.latest_spectrum();
-        // Both snapshots should be empty before the audio thread has
-        // published anything, and reading must be cheap (no audio data
-        // yet means the underlying Vec is empty).
-        assert!(a.is_empty());
-        assert!(b.is_empty());
-        // ArcSwap returns the same underlying Arc when the slot is
-        // unchanged — verifies we're not allocating per call.
-        assert!(Arc::ptr_eq(&a, &b));
-    }
-
-    #[test]
-    fn latest_waveform_starts_empty_and_is_cheap_to_clone() {
-        let engine = AudioEngine::new().expect("engine should construct");
-        let a = engine.latest_waveform();
-        let b = engine.latest_waveform();
-        assert!(a.is_empty());
-        assert!(b.is_empty());
-        assert!(Arc::ptr_eq(&a, &b));
-    }
-
-    #[test]
-    fn test_audio_engine_shutdown() {
-        // Test that AudioEngine can be shut down properly
-        let engine = AudioEngine::new().expect("Failed to create AudioEngine");
-        let result = engine.shutdown();
-        assert!(result.is_ok(), "AudioEngine should shutdown without errors");
-    }
-
-    #[test]
-    fn test_audio_command_send() {
-        // Test that commands can be sent to the audio engine
-        let engine = AudioEngine::new().expect("Failed to create AudioEngine");
-
-        // Send a stop command (safe even if nothing is playing)
-        let result = engine.send_command(AudioCommand::Stop);
-        assert!(result.is_ok(), "Should be able to send Stop command");
-
-        // Send equalizer commands
-        let result = engine.send_command(AudioCommand::SetEqualizerEnabled(true));
-        assert!(
-            result.is_ok(),
-            "Should be able to send SetEqualizerEnabled command"
-        );
-
-        let result = engine.send_command(AudioCommand::ResetEqualizer);
-        assert!(
-            result.is_ok(),
-            "Should be able to send ResetEqualizer command"
-        );
-    }
-
-    #[test]
-    fn test_audio_event_reception() {
-        // Test that events can be received from the audio engine
-        let engine = AudioEngine::new().expect("Failed to create AudioEngine");
-
-        // Try to receive events (should be non-blocking)
-        let event = engine.try_recv_event();
-        // Either None or Some(event) is fine, just shouldn't panic
-        // We just verify it returns an Option
-        assert!(
-            event.is_none() || event.is_some(),
-            "Should return an Option"
-        );
-    }
-
-    #[test]
-    fn test_equalizer_commands() {
-        // Test equalizer-related commands
-        let engine = AudioEngine::new().expect("Failed to create AudioEngine");
-
-        // Test setting individual band
-        let result = engine.send_command(AudioCommand::SetEqualizerBand(0, 3.0));
-        assert!(result.is_ok(), "Should be able to set equalizer band");
-
-        // Test setting all bands
-        let gains = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
-        let result = engine.send_command(AudioCommand::SetEqualizerBands(gains));
-        assert!(result.is_ok(), "Should be able to set all equalizer bands");
-    }
-
-    #[test]
-    fn test_track_info_creation() {
-        // Test TrackInfo structure
-        let track = TrackInfo {
-            path: PathBuf::from("/test/path.mp3"),
-            title: Some("Test Track".to_string()),
-            artist: Some("Test Artist".to_string()),
-            album: Some("Test Album".to_string()),
-            duration_secs: Some(180.0),
-            sample_rate: Some(44100),
-            channels: Some(2),
-            codec: Some("MP3".to_string()),
-            bitrate: Some(320000),
-            tracknumber: None,
-            year: None,
-            genre: None,
-            replaygain_track_gain_db: None,
-            replaygain_album_gain_db: None,
-        };
-
-        assert_eq!(track.title, Some("Test Track".to_string()));
-        assert_eq!(track.sample_rate, Some(44100));
-        assert_eq!(track.channels, Some(2));
-    }
 
     #[test]
     fn test_audio_capture_buffer() {
@@ -874,29 +207,11 @@ mod tests {
         assert_eq!(buffer.channels(), 2);
     }
 
+    #[cfg(any(feature = "player", feature = "tags"))]
     #[test]
-    fn test_audio_commands_clone() {
-        // Test that AudioCommand can be cloned
-        let cmd1 = AudioCommand::Stop;
-        let cmd2 = cmd1.clone();
-
-        // Both should be Stop
-        match (cmd1, cmd2) {
-            (AudioCommand::Stop, AudioCommand::Stop) => {}
-            _ => panic!("Commands should both be Stop"),
-        }
-    }
-
-    #[test]
-    fn test_multiple_engines() {
-        // Test that multiple AudioEngines cannot be created simultaneously
-        // (This tests the singleton behavior of audio output)
-        let engine1 = AudioEngine::new();
-        assert!(engine1.is_ok(), "First engine should be created");
-
-        // Note: Creating a second engine might fail or succeed depending on the audio backend
-        // We just test that it doesn't panic
-        let _engine2 = AudioEngine::new();
-        // No assertion here as behavior is platform-dependent
+    fn parse_year_finds_four_digits() {
+        assert_eq!(parse_year("1994-07-15"), Some(1994));
+        assert_eq!(parse_year("(1994)"), Some(1994));
+        assert_eq!(parse_year("94"), None);
     }
 }

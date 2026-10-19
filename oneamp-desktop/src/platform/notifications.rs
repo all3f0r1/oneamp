@@ -40,8 +40,7 @@ impl NotificationService {
     /// artist and album with " · " when both are present; either alone
     /// shows by itself; neither leaves the body empty.
     pub fn notify_track(&mut self, track: &TrackInfo) {
-        let fallback_title = track
-            .path
+        let fallback_title = std::path::Path::new(track.id.as_str())
             .file_stem()
             .and_then(|s| s.to_str())
             .map(|s| s.to_string());
