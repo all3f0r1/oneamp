@@ -31,4 +31,12 @@ ignore = [
     "RUSTSEC-2026-0194", # quick-xml duplicate-attribute quadratic time
     "RUSTSEC-2026-0195", # quick-xml NsReader unbounded allocation
     "RUSTSEC-2026-0192", # ttf-parser unmaintained (via egui's ab_glyph)
+
+    # zbus family declared unmaintained (triaged 2026-10-19). Pulled in on
+    # Linux by notify-rust (zbus 5) and the egui 0.30 fork's accesskit
+    # AT-SPI backend (zbus 4); both only talk to the local session bus.
+    # Informational, no patched release; revisit with egui/notify-rust.
+    "RUSTSEC-2026-0370", # zvariant unmaintained
+    "RUSTSEC-2026-0371", # zbus_names unmaintained
+    "RUSTSEC-2026-0372", # zvariant_derive unmaintained
 ]

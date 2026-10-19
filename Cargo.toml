@@ -62,7 +62,7 @@ anyhow = "1.0"
 crossbeam-channel = "0.5"
 
 # WSZ skin support
-zip = "2.2"
+zip = "9"
 image = "0.25"
 
 # Tag editing (read + write) across the formats Symphonia decodes. lofty

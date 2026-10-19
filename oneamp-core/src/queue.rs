@@ -132,10 +132,9 @@ impl PlayQueue<crate::media::MediaDescriptor> {
         }
         if self.peek_next().is_some_and(|n| n.id == track.id) {
             self.advance();
-        } else if let Some(i) = self.items.iter().position(|d| d.id == track.id) {
-            self.jump(i);
         } else {
-            return None;
+            let i = self.items.iter().position(|d| d.id == track.id)?;
+            self.jump(i);
         }
         Some(self.peek_next().cloned())
     }

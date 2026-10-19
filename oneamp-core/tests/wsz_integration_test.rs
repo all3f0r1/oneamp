@@ -45,7 +45,7 @@ fn create_test_wsz_complete() -> Vec<u8> {
     let mut buffer = Vec::new();
     {
         let mut zip = ZipWriter::new(Cursor::new(&mut buffer));
-        let options: FileOptions<'_, ()> = FileOptions::default();
+        let options: FileOptions<'_, '_, ()> = FileOptions::default();
 
         zip.start_file("main.bmp", options).unwrap();
         zip.write_all(&create_minimal_bmp(275, 116)).unwrap();
@@ -214,7 +214,7 @@ fn test_missing_main_bmp() {
     let mut buffer = Vec::new();
     {
         let mut zip = ZipWriter::new(Cursor::new(&mut buffer));
-        let options: FileOptions<'_, ()> = FileOptions::default();
+        let options: FileOptions<'_, '_, ()> = FileOptions::default();
 
         zip.start_file("cbuttons.bmp", options).unwrap();
         zip.write_all(&create_minimal_bmp(115, 36)).unwrap();
