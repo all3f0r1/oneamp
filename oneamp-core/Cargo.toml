@@ -15,45 +15,84 @@ path = "src/lib.rs"
 all-features = true
 rustdoc-args = ["--enable-index-page", "-Z", "unstable-options"]
 
+# Feature map (see docs/embedding/README.md):
+#   (none)      PCM processing chain only: no thread, no device, no network.
+#               Builds for wasm32-unknown-unknown.
+#   player      decoding (symphonia), decode workers, the playback engine,
+#               transitions, visualisation analysis. Output is supplied by
+#               the host (`output::pull`) unless `cpal-output` is on.
+#   cpal-output the desktop output backend.
+#   http        on-demand (Range) and live (ICY) HTTP sources.
+#   skins       Winamp `.wsz` skin loading.
+#   tags        tag editing (lofty).
+#   desktop     the desktop player's own services: Winamp playlist
+#               files (M3U/PLS with tag scanning), recent files.
+[features]
+default = ["desktop", "cpal-output"]
+desktop = ["player", "http", "skins", "tags"]
+player = ["dep:symphonia", "dep:rubato", "dep:crossbeam-channel", "dep:arc-swap", "dep:rustfft", "dep:ringbuf"]
+cpal-output = ["player", "dep:cpal"]
+http = ["player", "dep:ureq"]
+skins = ["dep:zip", "dep:image"]
+tags = ["dep:lofty"]
+
 [dependencies]
-# Audio decoding
-symphonia.workspace = true
-
-# Audio playback
-cpal.workspace = true
-rubato.workspace = true
-
-# Error handling
 anyhow.workspace = true
-
-# Channels for thread communication
-crossbeam-channel.workspace = true
-
-# WSZ skin support
-zip.workspace = true
-image.workspace = true
-
-# Tag editing (read + write)
-lofty.workspace = true
-
-# HTTP client for internet-radio + podcast streaming
-ureq.workspace = true
-
-# FFT for spectrum visualization
-rustfft.workspace = true
-
-# Lock-free SPSC ring for the cpal output hot path
-ringbuf.workspace = true
-
-# Wait-free Arc swap for spectrum / waveform publication
-arc-swap.workspace = true
-
-# Serialization for presets and configuration
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
+
+symphonia = { workspace = true, optional = true }
+cpal = { workspace = true, optional = true }
+rubato = { workspace = true, optional = true }
+crossbeam-channel = { workspace = true, optional = true }
+zip = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+lofty = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }
+rustfft = { workspace = true, optional = true }
+# Lock-free SPSC ring between the engine and the output callback.
+ringbuf = { workspace = true, optional = true }
+# Wait-free publication of snapshots, spectrum, waveform, meters.
+arc-swap = { workspace = true, optional = true }
 
 # Real-time scheduling for the cpal callback thread (via rtkit on
 # D-Bus) — fewer xruns under load. libdbus is already a build/runtime
 # dependency of the desktop app (MPRIS), so this adds nothing new.
 [target.'cfg(target_os = "linux")'.dependencies]
-cpal = { workspace = true, features = ["realtime-dbus"] }
+cpal = { workspace = true, optional = true, features = ["realtime-dbus"] }
+
+[[example]]
+name = "wsz_loader_example"
+required-features = ["skins"]
+
+[[example]]
+name = "remote_playback"
+required-features = ["player", "http", "cpal-output"]
+
+[[test]]
+name = "stream_responsiveness"
+required-features = ["player", "http"]
+
+[[test]]
+name = "engine_http"
+required-features = ["player", "http"]
+
+[[test]]
+name = "engine_local"
+required-features = ["player"]
+
+[[test]]
+name = "threads"
+required-features = ["player", "http"]
+
+[[test]]
+name = "codec_gapless"
+required-features = ["player"]
+
+[[test]]
+name = "wsz_integration_test"
+required-features = ["skins"]
+
+[[test]]
+name = "cursor_smoke"
+required-features = ["skins"]

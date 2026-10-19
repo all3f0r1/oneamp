@@ -394,7 +394,11 @@ impl PlaylistWindow {
     pub fn update(&mut self, events: &[AudioEvent]) {
         for event in events {
             match event {
-                AudioEvent::Position(current, total) => {
+                AudioEvent::Position { position, duration } => {
+                    let (current, total) = (
+                        &position.as_secs_f32(),
+                        &duration.map_or(0.0, |d| d.as_secs_f32()),
+                    );
                     self.stopped = false;
                     self.current_time_secs = *current;
                     // `total` is sent as 0.0 when unknown (streams, ICY, …);
@@ -406,8 +410,8 @@ impl PlaylistWindow {
                         None
                     };
                 }
-                AudioEvent::TrackLoaded(track) => {
-                    self.current_total_secs = track.duration_secs;
+                AudioEvent::TrackLoaded { track, .. } => {
+                    self.current_total_secs = track.duration_secs();
                 }
                 AudioEvent::Stopped => self.stopped = true,
                 _ => {}

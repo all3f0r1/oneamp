@@ -72,7 +72,10 @@ impl WszLoader {
                 .by_index(i)
                 .context("Failed to read file from archive")?;
 
-            let filename = file.name().to_string();
+            let filename = file
+                .name()
+                .context("Archive entry with an unreadable name")?
+                .to_string();
             let filename_lower = filename.to_lowercase();
 
             if filename_lower.ends_with(".bmp") {
@@ -373,7 +376,7 @@ mod tests {
         let mut buffer = Vec::new();
         {
             let mut zip = ZipWriter::new(Cursor::new(&mut buffer));
-            let options: FileOptions<'_, ()> = FileOptions::default();
+            let options: FileOptions<'_, '_, ()> = FileOptions::default();
 
             let bmp_header: Vec<u8> = vec![
                 0x42, 0x4D, 0x36, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x36, 0x00, 0x00, 0x00,
@@ -417,7 +420,7 @@ mod tests {
         let mut buffer = Vec::new();
         {
             let mut zip = ZipWriter::new(Cursor::new(&mut buffer));
-            let options: FileOptions<'_, ()> = FileOptions::default();
+            let options: FileOptions<'_, '_, ()> = FileOptions::default();
 
             // Minimum-viable main.bmp so validation passes
             let bmp_header: Vec<u8> = vec![

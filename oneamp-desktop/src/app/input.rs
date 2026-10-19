@@ -439,7 +439,7 @@ impl OneAmpApp {
                     } else {
                         (cur - step).max(0.0)
                     };
-                    self.audio.send_command(AudioCommand::Seek(new_pos));
+                    self.audio.send_command(AudioCommand::seek_secs(new_pos));
                 }
             }
             C::Mute => {

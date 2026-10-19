@@ -145,10 +145,13 @@ fn build_menu(bindings: &mut HashMap<MenuId, MenuCommand>) -> Menu {
     let previous = MenuItem::new("Previous", true, None);
     bindings.insert(
         previous.id().clone(),
-        MenuCommand::Audio(AudioCommand::Previous),
+        MenuCommand::Audio(Box::new(AudioCommand::Previous)),
     );
     let next = MenuItem::new("Next", true, None);
-    bindings.insert(next.id().clone(), MenuCommand::Audio(AudioCommand::Next));
+    bindings.insert(
+        next.id().clone(),
+        MenuCommand::Audio(Box::new(AudioCommand::Next)),
+    );
 
     let show = MenuItem::new("Show OneAmp", true, None);
     bindings.insert(show.id().clone(), MenuCommand::ShowWindow);

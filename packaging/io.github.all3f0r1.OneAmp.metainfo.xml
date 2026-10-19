@@ -69,6 +69,11 @@
   </screenshots>
 
   <releases>
+    <release version="1.4.0" date="2026-10-19">
+      <description>
+        <p>Seeking lands on the exact position, including in the last seconds of a track. Resumed tracks start where you left off without playing their beginning. The next track is prepared ahead and joined without a gap. Internet files resume after a dropped connection, surround files are folded down instead of losing channels, and no audio is dropped when the output is busy.</p>
+      </description>
+    </release>
     <release version="1.3.4" date="2026-10-16">
       <description>
         <p>Tooltips on every button, slider and menu row explain what the skinned controls do. Double-clicking a file already in the playlist plays it. The tag editor only writes the fields you changed, a malformed skin colour no longer crashes the player, and playlists and EQ presets are saved atomically.</p>

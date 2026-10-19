@@ -87,8 +87,8 @@ impl PlaylistEntry {
                 entry.album = info.album;
                 entry.tracknumber = info.tracknumber;
                 entry.year = info.year;
+                entry.duration = info.duration.map(|d| d.as_secs_f32());
                 entry.genre = info.genre;
-                entry.duration = info.duration_secs;
             }
             _ => {
                 entry.title = path
@@ -424,8 +424,8 @@ impl Playlist {
             entry.album = info.album;
             entry.tracknumber = info.tracknumber;
             entry.year = info.year;
+            entry.duration = info.duration.map(|d| d.as_secs_f32());
             entry.genre = info.genre;
-            entry.duration = info.duration_secs;
         }
     }
 

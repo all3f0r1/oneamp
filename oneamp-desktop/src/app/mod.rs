@@ -273,11 +273,10 @@ pub struct OneAmpApp {
     /// Configuration
     config: AppConfig,
 
-    /// Path of the track currently pre-queued via `AudioCommand::QueueNext`,
-    /// kept here so we don't resend the command every frame as the current
-    /// track approaches its end. Cleared when a `TrackLoaded` event arrives
-    /// for it (gapless swap happened) or when the user takes a manual
-    /// action that invalidates the queue (Play/Stop/Next/Previous).
+    /// Path last given to the engine as its next media
+    /// (`AudioCommand::SetNext`), so it is only resent when the playlist's
+    /// successor changes. Cleared when a `TrackLoaded` event arrives for
+    /// it (the engine switched to it) or on a user Play.
     pending_next_path: Option<std::path::PathBuf>,
 
     /// TTF/OTF bytes the current skin asked us to register as the
@@ -333,10 +332,6 @@ pub struct OneAmpApp {
     prefs_rename: Option<(String, String)>,
     /// Playlist states before destructive edits, most recent last.
     undo: Vec<Playlist>,
-    /// Global EQ curve set aside while an AUTO preset plays.
-    eq_global_stash: Option<(Vec<f32>, f32)>,
-    /// AUTO preset currently applied, if any.
-    eq_auto_applied: Option<crate::config::AutoEqPreset>,
 
     /// Cached cpal output device list, refreshed at most once per
     /// `OUTPUT_DEVICE_REFRESH_INTERVAL`. Enumerating devices is cheap
@@ -528,22 +523,18 @@ pub struct OneAmpApp {
     /// "due now"; subsequent ticks compare against
     /// `resume_store::SAVE_INTERVAL_SECS` to throttle.
     last_resume_save_at: Option<std::time::Instant>,
-    /// Set to the path the audio thread just loaded, alongside the
-    /// position we want to seek to once playback is actually rolling.
-    /// Cleared on the first `Position` event that confirms the load
-    /// reached the audio pipeline. We don't seek directly from
-    /// `TrackLoaded`: the audio thread is still finishing the load,
-    /// and a Seek issued in that window is sometimes silently dropped
-    /// (especially on container-seekable codecs that re-probe on
-    /// open).
-    pending_resume: Option<(std::path::PathBuf, f32)>,
     /// Current track and playhead restored from the last session,
-    /// consumed by the first `TrackLoaded` (seeks there if it's the same
-    /// file). Playback itself never auto-starts.
+    /// consumed by the first play of that file, which then starts there.
+    /// Playback itself never auto-starts.
     session_resume: Option<(std::path::PathBuf, f32)>,
     /// Session as last written, to skip redundant saves.
     saved_session: crate::session::Session,
     session_checked_at: std::time::Instant,
+}
+
+/// The desktop's media ids are its playlist paths (or saved URLs).
+pub(crate) fn track_path(track: &oneamp_core::TrackInfo) -> std::path::PathBuf {
+    std::path::PathBuf::from(track.id.as_str())
 }
 
 impl OneAmpApp {
@@ -661,36 +652,12 @@ impl OneAmpApp {
         windows.set_equalizer_current_preset(config.equalizer.current_preset.clone());
 
         // Apply persisted audio state to the audio thread so playback starts
-        // with the user's saved equalizer curve, volume, balance, shuffle, …
-        audio.send_command(AudioCommand::SetVolume(config.playback.volume));
-        if config.playback.muted {
-            audio.send_command(AudioCommand::SetMute(true));
-        }
-        audio.send_command(AudioCommand::SetBalance(config.playback.balance));
+        // with the user's saved equalizer curve, volume, balance, … — one
+        // atomic settings document instead of a command per field.
+        audio.send_command(AudioCommand::ApplySettings(Box::new(
+            config.audio_settings(),
+        )));
         audio.send_command(AudioCommand::SetShuffle(config.playback.shuffle_enabled));
-        audio.send_command(AudioCommand::SetRepeatMode(
-            config.playback.repeat_mode.into(),
-        ));
-        audio.send_command(AudioCommand::SetEqualizerEnabled(config.equalizer.enabled));
-        audio.send_command(AudioCommand::SetEqualizerBands(
-            config.equalizer.gains.clone(),
-        ));
-        audio.send_command(AudioCommand::SetEqualizerPreamp(config.equalizer.preamp_db));
-        audio.send_command(AudioCommand::SetCrossfade(
-            config.crossfade.enabled,
-            config.crossfade.duration_secs,
-        ));
-        audio.send_command(AudioCommand::SetReplayGainEnabled(
-            config.replaygain_enabled,
-        ));
-        // Push the persisted RG reference (track/album/auto) and mono
-        // downmix so the engine matches the menu's ✓ on the first frame.
-        audio.send_command(AudioCommand::SetReplayGainMode(config.replaygain_mode));
-        audio.send_command(AudioCommand::SetMono(config.mono_enabled));
-        audio.send_command(AudioCommand::SetLoudnessEnabled(config.loudness_enabled));
-        audio.send_command(AudioCommand::SetOutputDevice(
-            config.output_device_name.clone(),
-        ));
 
         let always_on_top = config.always_on_top;
         // Migration: OneAmp ≤ 1.0.5 exposed 0.25-step scale values in
@@ -759,8 +726,7 @@ impl OneAmpApp {
             prefs_tab: Default::default(),
             prefs_rename: None,
             undo: Vec::new(),
-            eq_global_stash: None,
-            eq_auto_applied: None,
+
             jump_last_char: None,
             jump_last_index: None,
             nul_progress: 0,
@@ -791,7 +757,6 @@ impl OneAmpApp {
                 .map(|p| crate::resume_store::ResumeStore::load(&p))
                 .unwrap_or_default(),
             last_resume_save_at: None,
-            pending_resume: None,
             session_resume,
             saved_session,
             session_checked_at: std::time::Instant::now(),
@@ -812,7 +777,7 @@ impl OneAmpApp {
         // rather than the engine's idle 0.
         let position_secs = match (&self.session_resume, self.playlist.current_entry()) {
             (Some((path, pos)), Some(e)) if &e.path == path => *pos,
-            _ if self.state.current_track.as_ref().map(|t| &t.path)
+            _ if self.state.current_track.as_ref().map(track_path).as_ref()
                 == self.playlist.current_entry().map(|e| &e.path) =>
             {
                 self.state.position.0
@@ -1633,7 +1598,13 @@ impl eframe::App for OneAmpApp {
                     // runs on the audio thread.
                     match oneamp_core::http_stream::validate_stream_url(&url) {
                         Ok(()) => {
-                            self.audio.send_command(AudioCommand::PlayUrl(url.clone()));
+                            self.audio.send_command(AudioCommand::Load {
+                                media: oneamp_core::MediaDescriptor::http(
+                                    oneamp_core::MediaId::new(url.clone()),
+                                    url.clone(),
+                                ),
+                                paused: false,
+                            });
                             // Append the URL to the playlist so the
                             // user can re-open it without re-typing.
                             // `add_track` would try to read tags from

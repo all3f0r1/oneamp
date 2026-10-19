@@ -33,8 +33,6 @@ use oneamp_core::{AudioCommand, AudioEvent};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
 };
-use std::path::PathBuf;
-use std::time::Duration;
 
 /// Last known playback status, kept here so:
 /// - `Toggle` events from the desktop can flip the right way without us
@@ -54,7 +52,7 @@ pub struct MediaControlsService {
     controls: MediaControls,
     event_rx: Receiver<MediaControlEvent>,
     last_status: LastStatus,
-    last_track_path: Option<PathBuf>,
+    last_track_path: Option<String>,
     last_volume_milli: Option<i32>,
 }
 
@@ -124,7 +122,7 @@ impl MediaControlsService {
                 MediaControlEvent::Previous => audio.send_command(AudioCommand::Previous),
                 MediaControlEvent::Stop => audio.send_command(AudioCommand::Stop),
                 MediaControlEvent::SetPosition(MediaPosition(pos)) => {
-                    audio.send_command(AudioCommand::Seek(pos.as_secs_f32()))
+                    audio.send_command(AudioCommand::Seek(pos))
                 }
                 MediaControlEvent::SetVolume(v) => {
                     let clamped = v.clamp(0.0, 1.0) as f32;
@@ -165,21 +163,14 @@ impl MediaControlsService {
     /// worth of work and starve a legitimate "Stopped" from landing.
     pub fn sync_audio_event(&mut self, event: &AudioEvent) {
         match event {
-            AudioEvent::TrackLoaded(track)
-                if self.last_track_path.as_ref() != Some(&track.path) =>
+            AudioEvent::TrackLoaded { track, .. }
+                if self.last_track_path.as_deref() != Some(track.id.as_str()) =>
             {
-                let duration = track.duration_secs.and_then(|s| {
-                    if s.is_finite() && s > 0.0 {
-                        Some(Duration::from_secs_f32(s))
-                    } else {
-                        None
-                    }
-                });
+                let duration = track.duration.filter(|d| !d.is_zero());
                 // Fallback title from filename so the widget never
                 // shows a blank line — matches what Winamp does when
                 // tags are missing.
-                let fallback_title = track
-                    .path
+                let fallback_title = std::path::Path::new(track.id.as_str())
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .map(|s| s.to_string());
@@ -192,7 +183,7 @@ impl MediaControlsService {
                     duration,
                 };
                 let _ = self.controls.set_metadata(meta);
-                self.last_track_path = Some(track.path.clone());
+                self.last_track_path = Some(track.id.as_str().to_string());
             }
             AudioEvent::Playing if self.last_status != LastStatus::Playing => {
                 let _ = self

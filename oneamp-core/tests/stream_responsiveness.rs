@@ -2,7 +2,8 @@
 //! connecting: a silent server used to hold Stop / volume changes for
 //! the full 15 s response timeout.
 
-use oneamp_core::{AudioCommand, AudioEngine, AudioEvent};
+use oneamp_core::output::pull::{PullConfig, pull_output};
+use oneamp_core::{AudioCommand, AudioEngine, AudioEvent, EngineConfig, MediaDescriptor, MediaId};
 use std::net::TcpListener;
 use std::time::{Duration, Instant};
 
@@ -12,8 +13,14 @@ fn commands_are_served_while_a_stream_is_connecting() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/stream", listener.local_addr().unwrap());
 
-    let engine = AudioEngine::new().unwrap();
-    engine.send_command(AudioCommand::PlayUrl(url)).unwrap();
+    let (backend, _handle) = pull_output(PullConfig::default());
+    let engine = AudioEngine::with_backend(Box::new(backend), EngineConfig::default()).unwrap();
+    engine
+        .send_command(AudioCommand::Load {
+            media: MediaDescriptor::http(MediaId::new("station"), url),
+            paused: false,
+        })
+        .unwrap();
     engine.send_command(AudioCommand::SetVolume(0.25)).unwrap();
     engine.send_command(AudioCommand::Stop).unwrap();
 

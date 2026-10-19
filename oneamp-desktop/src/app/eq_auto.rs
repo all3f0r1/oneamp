@@ -1,106 +1,40 @@
 //! EQ AUTO, Winamp's per-track auto-load presets.
 //!
-//! Contract:
-//! - The global curve is the last one set by hand; it's what gets saved.
-//! - AUTO on + the track has an auto-load preset: that preset plays.
-//! - No preset for the track, or AUTO off: the global curve plays.
-//! - An auto-loaded preset never becomes the global curve. Editing the
-//!   EQ by hand while one is applied makes the edited curve global.
+//! The policy lives in the engine (`oneamp_core::settings::EqAutoSettings`):
+//! it resolves the preset by media id when a track becomes current —
+//! including gapless and crossfaded transitions, without a UI round
+//! trip — and never lets a preset overwrite the global curve. This file
+//! only persists the presets and forwards changes.
 
 use super::OneAmpApp;
+use super::track_path;
 use crate::config::AutoEqPreset;
-use oneamp_core::{AudioCommand, AudioEvent};
-use std::path::Path;
+use oneamp_core::{AudioCommand, MediaId};
 
 impl OneAmpApp {
     /// The curve to persist: the global one, even while an auto-load
     /// preset is playing.
     pub(super) fn global_eq(&self) -> (Vec<f32>, f32) {
-        self.eq_global_stash.clone().unwrap_or_else(|| {
-            (
+        match self.audio.snapshot() {
+            Some(snap) if snap.eq.auto_for.is_some() => {
+                (snap.eq.global.gains_db.to_vec(), snap.eq.global.preamp_db)
+            }
+            _ => (
                 self.state.equalizer.gains.clone(),
                 self.state.equalizer.preamp_db,
-            )
-        })
+            ),
+        }
     }
 
     pub(super) fn toggle_eq_auto(&mut self) {
         let on = !self.config.equalizer.auto;
         self.config.equalizer.auto = on;
         self.mark_dirty();
-        if on {
-            let path = self.state.current_track.as_ref().map(|t| t.path.clone());
-            if let Some(path) = path {
-                self.apply_eq_auto(&path);
-            }
-        } else {
-            self.restore_global_eq();
-        }
-    }
-
-    /// Track `path` just loaded (or AUTO turned on while it plays).
-    pub(super) fn apply_eq_auto(&mut self, path: &Path) {
-        let preset = self
-            .config
-            .equalizer
-            .auto_presets
-            .get(&path.to_string_lossy().into_owned())
-            .cloned();
-        match preset.filter(|_| self.config.equalizer.auto) {
-            Some(p) => {
-                if self.eq_global_stash.is_none() {
-                    self.eq_global_stash = Some(self.global_eq());
-                }
-                self.send_eq_curve(&p.gains, p.preamp_db);
-                self.eq_auto_applied = Some(p);
-            }
-            None => self.restore_global_eq(),
-        }
-    }
-
-    fn restore_global_eq(&mut self) {
-        self.eq_auto_applied = None;
-        if let Some((gains, preamp)) = self.eq_global_stash.take() {
-            self.send_eq_curve(&gains, preamp);
-        }
-    }
-
-    fn send_eq_curve(&self, gains: &[f32], preamp_db: f32) {
-        self.audio
-            .send_command(AudioCommand::SetEqualizerBands(gains.to_vec()));
-        self.audio
-            .send_command(AudioCommand::SetEqualizerPreamp(preamp_db));
-    }
-
-    /// Engine echoed new gains or preamp. If either differs from the
-    /// auto-loaded preset, the user edited the EQ by hand: that curve is
-    /// now global. Each echo is checked against its own field — the
-    /// bands echo lands before the preamp one, so comparing the whole
-    /// curve at that point would misread our own preset load as manual.
-    pub(super) fn note_eq_update(&mut self, event: &AudioEvent) {
-        let Some(applied) = &self.eq_auto_applied else {
-            return;
-        };
-        let manual = match event {
-            AudioEvent::EqualizerUpdated(_, gains) => {
-                applied.gains.len() != gains.len()
-                    || applied
-                        .gains
-                        .iter()
-                        .zip(gains)
-                        .any(|(x, y)| (x - y).abs() > 0.01)
-            }
-            AudioEvent::EqualizerPreampUpdated(db) => (applied.preamp_db - db).abs() > 0.01,
-            _ => false,
-        };
-        if manual {
-            self.eq_auto_applied = None;
-            self.eq_global_stash = None;
-        }
+        self.audio.send_command(AudioCommand::SetEqAuto(on));
     }
 
     pub(super) fn save_eq_auto_preset(&mut self) {
-        let Some(path) = self.state.current_track.as_ref().map(|t| t.path.clone()) else {
+        let Some(path) = self.state.current_track.as_ref().map(track_path) else {
             self.push_toast("Play a track first", std::time::Duration::from_millis(1800));
             return;
         };
@@ -108,6 +42,10 @@ impl OneAmpApp {
             gains: self.state.equalizer.gains.clone(),
             preamp_db: self.state.equalizer.preamp_db,
         };
+        self.audio.send_command(AudioCommand::SetEqAutoPreset(
+            MediaId::from_path(&path),
+            Some(preset.curve()),
+        ));
         self.config
             .equalizer
             .auto_presets
@@ -120,7 +58,7 @@ impl OneAmpApp {
     }
 
     pub(super) fn remove_eq_auto_preset(&mut self) {
-        let Some(path) = self.state.current_track.as_ref().map(|t| t.path.clone()) else {
+        let Some(path) = self.state.current_track.as_ref().map(track_path) else {
             return;
         };
         if self
@@ -130,8 +68,11 @@ impl OneAmpApp {
             .remove(&*path.to_string_lossy())
             .is_some()
         {
+            self.audio.send_command(AudioCommand::SetEqAutoPreset(
+                MediaId::from_path(&path),
+                None,
+            ));
             self.mark_dirty();
-            self.restore_global_eq();
             self.push_toast(
                 "Auto-load preset removed",
                 std::time::Duration::from_millis(1800),

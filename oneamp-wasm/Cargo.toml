@@ -1,0 +1,15 @@
+[package]
+name = "oneamp-wasm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "OneAmp's PCM processing chain as a dependency-free WebAssembly module (C ABI) for AudioWorklet hosts"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Processing chain only: no decoder, no device, no network, no thread.
+oneamp-core = { path = "../oneamp-core", default-features = false }
+serde_json.workspace = true

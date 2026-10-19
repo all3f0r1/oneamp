@@ -43,7 +43,8 @@ use oneamp_core::AudioCommand;
 pub enum MenuCommand {
     MainWindow(MainWindowAction),
     Playlist(PlaylistAction),
-    Audio(AudioCommand),
+    /// Boxed: a command can carry a whole media descriptor.
+    Audio(Box<AudioCommand>),
     /// Smart Play/Pause: toggles based on current playback state.
     /// Handled by `OneAmpApp::toggle_playback` so the menu agrees with
     /// the Space-key shortcut.
@@ -208,14 +209,17 @@ mod macos {
             );
             bindings.insert(
                 previous.id().clone(),
-                MenuCommand::Audio(AudioCommand::Previous),
+                MenuCommand::Audio(Box::new(AudioCommand::Previous)),
             );
             let next = MenuItem::new(
                 "Next",
                 true,
                 Some(Accelerator::new(Some(Modifiers::SUPER), Code::ArrowRight)),
             );
-            bindings.insert(next.id().clone(), MenuCommand::Audio(AudioCommand::Next));
+            bindings.insert(
+                next.id().clone(),
+                MenuCommand::Audio(Box::new(AudioCommand::Next)),
+            );
             let shuffle = MenuItem::new("Shuffle", true, None);
             bindings.insert(
                 shuffle.id().clone(),

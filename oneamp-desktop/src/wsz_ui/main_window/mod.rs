@@ -603,7 +603,11 @@ impl WszMainWindow {
                     self.play_state.set_state(PlayState::Stopped);
                     self.mono_stereo.set_state(ChannelState::None);
                 }
-                AudioEvent::Position(current, total) => {
+                AudioEvent::Position { position, duration } => {
+                    let (current, total) = (
+                        &position.as_secs_f32(),
+                        &duration.map_or(0.0, |d| d.as_secs_f32()),
+                    );
                     self.display.set_time(*current, *total);
                     if !self.position_slider.is_dragging {
                         let progress = if *total > 0.0 { current / total } else { 0.0 };
@@ -616,17 +620,16 @@ impl WszMainWindow {
                 AudioEvent::BalanceUpdated(balance) if !self.balance_slider.is_dragging => {
                     self.balance_slider.set_value(*balance);
                 }
-                AudioEvent::TrackLoaded(track) => {
+                AudioEvent::TrackLoaded { track, .. } => {
                     self.has_track = true;
                     let title = track.title.clone().unwrap_or_else(|| {
-                        track
-                            .path
+                        std::path::Path::new(track.id.as_str())
                             .file_name()
                             .and_then(|n: &std::ffi::OsStr| n.to_str())
                             .unwrap_or("Unknown")
                             .to_string()
                     });
-                    self.title_scroller.set_track(title, track.duration_secs);
+                    self.title_scroller.set_track(title, track.duration_secs());
 
                     // TrackInfo.bitrate is in bits/sec; the display takes kbps.
                     let bitrate_kbps = track.bitrate.map(|b| b / 1000).unwrap_or(0);

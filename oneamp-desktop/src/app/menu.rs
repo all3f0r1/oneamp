@@ -53,7 +53,7 @@ impl OneAmpApp {
         match cmd {
             MenuCommand::MainWindow(a) => self.handle_main_window_action(a, ctx),
             MenuCommand::Playlist(a) => self.handle_playlist_action(a),
-            MenuCommand::Audio(c) => self.audio.send_command(c),
+            MenuCommand::Audio(c) => self.audio.send_command(*c),
             MenuCommand::TogglePlayback => self.toggle_playback(),
             MenuCommand::ShowWindow => {
                 // Focus brings the window to the foreground even when
