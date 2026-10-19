@@ -4,6 +4,35 @@ All notable changes to OneAmp are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-10-19
+
+### Added
+- `oneamp-core` is embeddable (docs/embedding/): media descriptors with a
+  host identity, metadata, gains, start position and timeline offset;
+  seekable on-demand HTTP (bounded Range requests, exact resume with
+  `If-Range`, changed-resource detection); an injectable access contract
+  with coordinated renewal and redacted diagnostics; a standalone PCM
+  processor; versioned audio settings; EQ AUTO and Repeat One handled in
+  the engine; a host-pulled output; structured errors, command results
+  per playback instance and a coherent state snapshot.
+- `oneamp-android` (Kotlin/JNI bridge) and `oneamp-wasm` (AudioWorklet
+  processor).
+
+### Changed
+- Cargo features: the processor builds alone (also for wasm32); cpal,
+  HTTP, skins, tags and desktop services are optional.
+- The desktop and the CLI use the new API: resume positions are applied
+  before the first sample instead of a seek after load; the next track is
+  prepared by the engine (`SetNext`) instead of a time-based pre-queue;
+  the CLI plays several files or URLs gaplessly.
+
+### Fixed
+- Seeking no longer refuses the last two seconds, and lands on the exact
+  frame (samples before the target are decoded and dropped).
+- A full output ring no longer drops audio; surround sources are folded
+  down instead of losing channels; a cut HTTP transfer is no longer
+  treated as the end of a podcast.
+
 ## [1.3.4] — 2026-10-16
 
 ### Added
