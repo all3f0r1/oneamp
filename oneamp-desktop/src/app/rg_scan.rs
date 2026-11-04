@@ -18,6 +18,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, UNIX_EPOCH};
 
+/// A path paired with an album tag (a file to measure, or an album key).
+type PathAlbum = (PathBuf, Option<String>);
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 struct Stamp {
     size: u64,
@@ -181,8 +184,7 @@ impl OneAmpApp {
         }
         // A whole album is measured again when one of its files lacks
         // figures: album loudness needs every track.
-        let mut albums: HashMap<(PathBuf, Option<String>), (bool, Vec<(PathBuf, Option<String>)>)> =
-            HashMap::new();
+        let mut albums: HashMap<PathAlbum, (bool, Vec<PathAlbum>)> = HashMap::new();
         for e in self.playlist.entries() {
             if e.unavailable || oneamp_core::is_stream_url(&e.path) {
                 continue;
@@ -193,7 +195,7 @@ impl OneAmpApp {
             slot.0 |= self.rg_cache.get(&e.path).is_none();
             slot.1.push((e.path.clone(), e.album.clone()));
         }
-        let files: Vec<(PathBuf, Option<String>)> = albums
+        let files: Vec<PathAlbum> = albums
             .into_values()
             .filter(|(missing, _)| *missing)
             .flat_map(|(_, files)| files)

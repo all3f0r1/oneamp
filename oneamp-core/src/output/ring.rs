@@ -396,7 +396,11 @@ mod tests {
         let half = (rate / freq / 2) as usize;
         (0..frames)
             .flat_map(|n| {
-                let s = if (n / half) % 2 == 0 { 1.0 } else { -1.0 };
+                let s = if (n / half).is_multiple_of(2) {
+                    1.0
+                } else {
+                    -1.0
+                };
                 [s, s]
             })
             .collect()
