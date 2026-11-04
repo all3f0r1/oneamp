@@ -41,6 +41,8 @@ pub mod http_range;
 #[cfg(feature = "http")]
 pub mod http_stream;
 #[cfg(feature = "player")]
+pub mod loudness_scan;
+#[cfg(feature = "player")]
 pub mod media;
 #[cfg(feature = "player")]
 pub mod output;
@@ -65,7 +67,10 @@ pub use atomic_write::write_atomic;
 pub use audio_capture::AudioCaptureBuffer;
 pub use dsp::{ListeningContext, MAX_VOLUME, MediaGain, ReplayGainMode};
 pub use equalizer::{EQ_MAX_DB, Equalizer};
-pub use equalizer_presets::{BuiltinPresets, EQ_FREQUENCIES, EqualizerPreset, PresetManager};
+pub use equalizer_presets::{
+    BuiltinPresets, EQ_FREQUENCIES, EqualizerPreset, PresetManager, follow_preamp_db,
+    preamp_db_for_gains,
+};
 pub use error::{ErrorCategory, PlayerError};
 #[cfg(feature = "desktop")]
 pub use playlist::{Playlist, PlaylistEntry, SortOrder};

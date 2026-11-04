@@ -1,7 +1,7 @@
 //! Audio output straight on cpal.
 //!
-//! Engine thread → [`OutputStream::write`] → (optional sinc resampler)
-//! → channel mapping → lock-free SPSC ring → cpal callback (volume,
+//! Engine thread → [`OutputStream::write`] → (optional sinc resampler
+//! + peak guard) → channel mapping → lock-free SPSC ring → cpal callback (volume,
 //! dither, quantization) → device.
 //!
 //! The stream is opened at the track's native sample rate whenever the

@@ -265,7 +265,21 @@ impl EqualizerWindow {
             }
         } else {
             let band = slider_idx - 1;
+            let old_bands = self.eq_bands;
             self.eq_bands[band] = gain.clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);
+            // An automatic preamp (flat curve, built-in preset) tracks
+            // the boosts so the limiter isn't left doing the EQ's job;
+            // a hand-set preamp stays put.
+            if let Some(p) = oneamp_core::follow_preamp_db(self.preamp, &old_bands, &self.eq_bands)
+            {
+                let p = p.clamp(EQ_GAIN_MIN_DB, EQ_GAIN_MAX_DB);
+                if p != self.preamp {
+                    self.preamp = p;
+                    if let Some(engine) = audio_engine {
+                        let _ = engine.send_command(AudioCommand::SetEqualizerPreamp(p));
+                    }
+                }
+            }
             // Manual band drag invalidates the "current preset" mark
             // — the curve no longer matches a known preset, so the
             // dropdown shouldn't claim it does. Preamp drags don't

@@ -3,6 +3,7 @@
 
 use super::OutputDiagnostics;
 use crate::dsp::channels::map_channels;
+use crate::dsp::stages::Limiter;
 use crate::resample::Resample;
 use ringbuf::{
     HeapCons, HeapProd, HeapRb,
@@ -63,6 +64,12 @@ pub(crate) struct RingWriter {
     in_rate: u32,
     dev_rate: u32,
     resampler: Option<Resample>,
+    /// Peak guard after the resampler: band-limiting a signal the chain
+    /// left at full scale can overshoot it (Gibbs, inter-sample peaks
+    /// landing on the new grid), and `to_device` would clip those hard.
+    /// Present only while resampling, so the native path stays untouched.
+    guard: Option<Limiter>,
+    guarded: Vec<f32>,
     mapped: Vec<f32>,
     /// Device-format samples converted but not yet in the ring.
     pending: Vec<f32>,
@@ -97,6 +104,9 @@ pub(crate) fn ring(
     let resampler = (in_rate != dev_rate)
         .then(|| Resample::new(in_rate, dev_rate, usize::from(in_ch.max(1)), false))
         .transpose()?;
+    let guard = resampler
+        .is_some()
+        .then(|| Limiter::new(dev_rate as f32, usize::from(in_ch.max(1))));
     Ok((
         RingWriter {
             prod,
@@ -106,6 +116,8 @@ pub(crate) fn ring(
             in_rate,
             dev_rate,
             resampler,
+            guard,
+            guarded: Vec::new(),
             mapped: Vec::new(),
             pending: Vec::new(),
             threshold,
@@ -139,9 +151,15 @@ impl RingWriter {
     }
 
     fn convert_into_pending(&mut self, samples: &[f32]) {
-        let data: &[f32] = match self.resampler.as_mut() {
-            Some(r) => r.process(samples),
-            None => samples,
+        let data: &[f32] = match (self.resampler.as_mut(), self.guard.as_mut()) {
+            (Some(r), Some(g)) => {
+                self.guarded.clear();
+                self.guarded.extend_from_slice(r.process(samples));
+                g.process(&mut self.guarded);
+                &self.guarded
+            }
+            (Some(r), None) => r.process(samples),
+            (None, _) => samples,
         };
         if self.in_ch == self.dev_ch {
             self.pending.extend_from_slice(data);
@@ -186,6 +204,9 @@ impl RingWriter {
         if let Some(r) = &self.resampler {
             frames += r.pending_frames() as u64 + (r.delay_frames() as f64 * ratio) as u64;
         }
+        if let Some(g) = &self.guard {
+            frames += (g.latency_frames() as f64 * ratio) as u64;
+        }
         frames
     }
 
@@ -216,11 +237,21 @@ impl RingWriter {
         if let Some(r) = self.resampler.as_mut() {
             r.reset();
         }
+        if let Some(g) = self.guard.as_mut() {
+            g.reset();
+        }
     }
 
     pub fn finish(&mut self) {
         if let Some(r) = self.resampler.as_mut() {
-            let tail = r.flush();
+            let mut tail = r.flush();
+            if let Some(g) = self.guard.as_mut() {
+                g.process(&mut tail);
+                // Push out what the guard's lookahead still holds.
+                let mut held = vec![0.0; g.latency_frames() * self.in_ch];
+                g.process(&mut held);
+                tail.extend_from_slice(&held);
+            }
             if self.in_ch == self.dev_ch {
                 self.pending.extend_from_slice(&tail);
             } else {
@@ -357,5 +388,47 @@ mod tests {
         r.render(&mut out);
         assert_eq!(out, [0.1, 0.1, 0.2, 0.2]);
         assert_eq!(w.channel_mapping().as_deref(), Some("mono→2 copies"));
+    }
+
+    /// A full-scale square wave: legal for the chain (every sample is
+    /// within ±1.0), but band-limiting it rings past full scale.
+    fn full_scale_square(rate: u32, freq: u32, frames: usize) -> Vec<f32> {
+        let half = (rate / freq / 2) as usize;
+        (0..frames)
+            .flat_map(|n| {
+                let s = if (n / half) % 2 == 0 { 1.0 } else { -1.0 };
+                [s, s]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn resampling_overshoot_is_limited_not_clipped() {
+        let input = full_scale_square(44_100, 1_000, 22_050);
+
+        // The premise: the bare resampler does overshoot.
+        let mut bare = Resample::new(44_100, 48_000, 2, false).unwrap();
+        let mut raw = bare.process(&input).to_vec();
+        raw.extend(bare.flush());
+        let raw_peak = raw.iter().fold(0.0_f32, |m, s| m.max(s.abs()));
+        assert!(raw_peak > 1.02, "expected an overshoot, peak {raw_peak}");
+
+        let (mut w, mut r) = ring(44_100, 2, 48_000, 2).unwrap();
+        assert_eq!(w.write(&input), input.len());
+        w.finish();
+        let mut peak = 0.0_f32;
+        let mut frames = 0;
+        let mut out = vec![0.0; 4096];
+        loop {
+            let n = r.read_available(&mut out);
+            if n == 0 && w.is_drained() {
+                break;
+            }
+            peak = out[..n * 2].iter().fold(peak, |m, s| m.max(s.abs()));
+            frames += n;
+        }
+        assert!(peak <= Limiter::CEILING + 1e-6, "guarded peak {peak}");
+        // Nothing lost: the guard's lookahead was flushed by `finish`.
+        assert!(frames >= 24_000, "{frames} frames out");
     }
 }

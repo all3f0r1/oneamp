@@ -680,6 +680,29 @@ impl Playlist {
         })
     }
 
+    /// How the entry at `index` is being listened to, for ReplayGain
+    /// [`crate::ReplayGainMode::Auto`]: [`ListeningContext::Album`] when
+    /// it sits next to another track of the same album (same album tag,
+    /// and same folder or same artist) and plays in order, so album gain
+    /// keeps the album's own dynamics; [`ListeningContext::Mixed`] under
+    /// shuffle or among unrelated tracks.
+    pub fn listening_context(&self, index: usize) -> crate::ListeningContext {
+        use crate::ListeningContext::{Album, Mixed};
+        let Some(entry) = self.entries.get(index) else {
+            return Mixed;
+        };
+        if self.shuffle_enabled {
+            return Mixed;
+        }
+        let neighbours = [index.checked_sub(1), index.checked_add(1)];
+        let together = neighbours
+            .into_iter()
+            .flatten()
+            .filter_map(|i| self.entries.get(i))
+            .any(|other| same_album(entry, other));
+        if together { Album } else { Mixed }
+    }
+
     /// Non-mutating version of `next_shuffle_index` for `peek_next_index`.
     /// Unlike the mutating version, this never reshuffles or advances the
     /// seed — a peek must not have side effects. When the anti-repeat pool
@@ -1404,9 +1427,54 @@ impl Playlist {
     }
 }
 
+/// Two entries of one album: same album tag (trimmed, case-insensitive)
+/// and either the same folder or the same artist.
+fn same_album(a: &PlaylistEntry, b: &PlaylistEntry) -> bool {
+    let norm = |s: &Option<String>| {
+        s.as_deref()
+            .map(|v| v.trim().to_lowercase())
+            .filter(|v| !v.is_empty())
+    };
+    let (Some(x), Some(y)) = (norm(&a.album), norm(&b.album)) else {
+        return false;
+    };
+    x == y
+        && (a.path.parent() == b.path.parent()
+            || norm(&a.artist).is_some_and(|ar| norm(&b.artist) == Some(ar)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listening_context_follows_album_neighbours_and_shuffle() {
+        use crate::ListeningContext::{Album, Mixed};
+        let e = |path: &str, artist: &str, album: Option<&str>| {
+            PlaylistEntry::with_metadata(
+                PathBuf::from(path),
+                None,
+                Some(artist.to_string()),
+                album.map(str::to_string),
+                None,
+            )
+        };
+        let mut pl = Playlist::new("t".into());
+        pl.entries = vec![
+            e("/m/a/1.flac", "A", Some("Live")),
+            e("/m/a/2.flac", "A", Some(" live ")),
+            e("/m/b/1.flac", "B", Some("Live")),
+            e("/m/c/1.flac", "C", None),
+        ];
+        assert_eq!(pl.listening_context(0), Album);
+        assert_eq!(pl.listening_context(1), Album);
+        // Same album title, other folder and artist: unrelated record.
+        assert_eq!(pl.listening_context(2), Mixed);
+        assert_eq!(pl.listening_context(3), Mixed);
+        assert_eq!(pl.listening_context(9), Mixed);
+        pl.set_shuffle(true);
+        assert_eq!(pl.listening_context(0), Mixed);
+    }
 
     /// Build a playlist entry inline so test cases can read like fixture
     /// definitions instead of stacking constructor boilerplate.

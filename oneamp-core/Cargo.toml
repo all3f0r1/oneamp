@@ -30,7 +30,7 @@ rustdoc-args = ["--enable-index-page", "-Z", "unstable-options"]
 [features]
 default = ["desktop", "cpal-output"]
 desktop = ["player", "http", "skins", "tags"]
-player = ["dep:symphonia", "dep:rubato", "dep:crossbeam-channel", "dep:arc-swap", "dep:rustfft", "dep:ringbuf"]
+player = ["dep:symphonia", "dep:rubato", "dep:ebur128", "dep:crossbeam-channel", "dep:arc-swap", "dep:rustfft", "dep:ringbuf"]
 cpal-output = ["player", "dep:cpal"]
 http = ["player", "dep:ureq"]
 skins = ["dep:zip", "dep:image"]
@@ -44,6 +44,7 @@ serde_json.workspace = true
 symphonia = { workspace = true, optional = true }
 cpal = { workspace = true, optional = true }
 rubato = { workspace = true, optional = true }
+ebur128 = { workspace = true, optional = true }
 crossbeam-channel = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
 image = { workspace = true, optional = true }

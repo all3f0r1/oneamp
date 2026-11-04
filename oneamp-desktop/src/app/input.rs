@@ -159,6 +159,7 @@ impl OneAmpApp {
                     .send_command(AudioCommand::SetReplayGainMode(mode));
                 self.mark_dirty();
             }
+            MainWindowAction::AnalyzeReplayGain => self.start_replaygain_scan(),
             MainWindowAction::ToggleMono => {
                 self.config.mono_enabled = !self.config.mono_enabled;
                 self.audio
@@ -355,7 +356,9 @@ impl OneAmpApp {
                 self.jump_in_playlist(*c);
                 continue;
             }
-            if chord.key == egui::Key::Escape && (self.cancel_import() || self.show_hotkeys) {
+            if chord.key == egui::Key::Escape
+                && (self.cancel_import() || self.cancel_replaygain_scan() || self.show_hotkeys)
+            {
                 self.show_hotkeys = false;
                 continue;
             }
@@ -517,6 +520,16 @@ impl OneAmpApp {
                 if let Some(g) = self.state.equalizer.gains.get(band).copied() {
                     let step = if up { 1.0 } else { -1.0 };
                     let g = (g + step).clamp(-oneamp_core::EQ_MAX_DB, oneamp_core::EQ_MAX_DB);
+                    let old = self.state.equalizer.gains.clone();
+                    let mut new = old.clone();
+                    new[band] = g;
+                    if let Some(p) =
+                        oneamp_core::follow_preamp_db(self.state.equalizer.preamp_db, &old, &new)
+                    {
+                        self.audio.send_command(AudioCommand::SetEqualizerPreamp(
+                            p.clamp(-oneamp_core::EQ_MAX_DB, oneamp_core::EQ_MAX_DB),
+                        ));
+                    }
                     self.audio
                         .send_command(AudioCommand::SetEqualizerBand(band, g));
                     self.windows.set_equalizer_current_preset(None);

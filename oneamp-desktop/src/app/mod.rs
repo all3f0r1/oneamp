@@ -12,6 +12,7 @@ pub(crate) mod keymap;
 mod menu;
 mod playlist_ops;
 mod preferences;
+mod rg_scan;
 mod skin;
 mod state;
 
@@ -327,6 +328,10 @@ pub struct OneAmpApp {
     preferences_open: bool,
     /// Background add of files / folders / playlist files, if running.
     import: Option<import::Import>,
+    /// ReplayGain figures OneAmp measured for untagged files.
+    rg_cache: rg_scan::GainCache,
+    /// Background ReplayGain analysis, if running.
+    rg_scan: Option<rg_scan::Scan>,
     prefs_tab: preferences::PrefsTab,
     /// User preset being renamed in Preferences: (old name, edit buffer).
     prefs_rename: Option<(String, String)>,
@@ -723,6 +728,8 @@ impl OneAmpApp {
             jump_dialog: None,
             preferences_open: false,
             import: None,
+            rg_cache: rg_scan::GainCache::load(),
+            rg_scan: None,
             prefs_tab: Default::default(),
             prefs_rename: None,
             undo: Vec::new(),
@@ -1365,6 +1372,7 @@ impl eframe::App for OneAmpApp {
         self.handle_keyboard(ctx);
         self.handle_drops(ctx);
         self.poll_import(ctx);
+        self.poll_replaygain_scan();
 
         let spectrum = self.audio.get_spectrum_data();
         let waveform = self.audio.get_waveform_data();

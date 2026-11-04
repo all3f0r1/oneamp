@@ -59,7 +59,11 @@ impl OneAmpApp {
         // Resume slots are applied as the start position: the engine
         // reaches it before the first sample is output, so the beginning
         // is never heard (the old seek-after-load let it through).
-        let mut media = MediaDescriptor::file(&path);
+        let mut media =
+            MediaDescriptor::file(&path).with_listening_context(self.listening_context_for(&path));
+        if let Some(gain) = self.analyzed_gain_for(&path) {
+            media = media.with_gain(gain);
+        }
         if let Some(start) = self.resume_position_for(&path) {
             media = media.starting_at(Duration::from_secs_f32(start));
             self.push_toast(
@@ -463,6 +467,21 @@ impl OneAmpApp {
         }
     }
 
+    /// How `path` is being listened to, for ReplayGain Auto: album gain
+    /// while an album plays in order, track gain otherwise.
+    pub(super) fn listening_context_for(&self, path: &Path) -> oneamp_core::ListeningContext {
+        if self.state.shuffle_enabled {
+            return oneamp_core::ListeningContext::Mixed;
+        }
+        self.playlist
+            .entries()
+            .iter()
+            .position(|e| e.path == path)
+            .map_or(oneamp_core::ListeningContext::Mixed, |i| {
+                self.playlist.listening_context(i)
+            })
+    }
+
     /// Keep the engine's "next media" in step with the playlist. The
     /// engine prepares it ahead of time and joins it gaplessly (or
     /// crossfades) on its own; this only says *what* comes next. No next
@@ -485,9 +504,15 @@ impl OneAmpApp {
         if wanted == self.pending_next_path {
             return;
         }
-        self.audio.send_command(AudioCommand::SetNext(
-            wanted.as_deref().map(MediaDescriptor::from_path_or_url),
-        ));
+        let media = wanted.as_deref().map(|p| {
+            let mut m = MediaDescriptor::from_path_or_url(p)
+                .with_listening_context(self.listening_context_for(p));
+            if let Some(gain) = self.analyzed_gain_for(p) {
+                m = m.with_gain(gain);
+            }
+            m
+        });
+        self.audio.send_command(AudioCommand::SetNext(media));
         self.pending_next_path = wanted;
     }
 }

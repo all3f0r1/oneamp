@@ -54,6 +54,8 @@ cpal = "0.18"
 # Band-limited (sinc) resampling, used only when the device refuses the
 # track's native sample rate.
 rubato = "5"
+# EBU R128 / BS.1770 loudness, for ReplayGain figures of untagged files.
+ebur128 = "0.1"
 
 # Error handling
 anyhow = "1.0"

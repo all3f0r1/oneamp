@@ -19,7 +19,7 @@ use std::path::Path;
 /// preset alone fully sets up the filter chain *and* the pre-buffer
 /// gain so a normalized track doesn't constantly trip the brickwall
 /// limiter.
-fn preamp_db_for_gains(gains: &[f32]) -> f32 {
+pub fn preamp_db_for_gains(gains: &[f32]) -> f32 {
     let mut eq = Equalizer::new(44100.0);
     let mut padded = [0.0_f32; 10];
     for (i, slot) in padded.iter_mut().enumerate() {
@@ -29,6 +29,21 @@ fn preamp_db_for_gains(gains: &[f32]) -> f32 {
     }
     eq.set_all_gains(&padded);
     eq.headroom_db()
+}
+
+/// Preamp tolerance (dB) under which a preamp counts as "the one
+/// [`preamp_db_for_gains`] would pick".
+const FOLLOW_TOLERANCE_DB: f32 = 0.05;
+
+/// Preamp assistance for hand-made curves: when the current preamp is
+/// the automatic one for `old_gains` (a flat curve at 0 dB, or a
+/// built-in preset as applied), return the automatic preamp for
+/// `new_gains`, so boosting a band lowers the preamp with it instead of
+/// leaving the limiter to catch the excess. A preamp the user set by
+/// hand is left alone (`None`).
+pub fn follow_preamp_db(preamp_db: f32, old_gains: &[f32], new_gains: &[f32]) -> Option<f32> {
+    let auto = preamp_db_for_gains(old_gains);
+    ((preamp_db - auto).abs() < FOLLOW_TOLERANCE_DB).then(|| preamp_db_for_gains(new_gains))
 }
 
 /// Re-export of the canonical 10-band EQ frequency series. The actual
@@ -419,6 +434,31 @@ impl Default for PresetManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preamp_follows_band_boosts_from_flat() {
+        let flat = [0.0_f32; 10];
+        let mut boosted = flat;
+        boosted[2] = 6.0;
+        let p = follow_preamp_db(0.0, &flat, &boosted).expect("flat curve follows");
+        assert!((p + 6.0).abs() < 0.3, "preamp {p}");
+        // And back: removing the boost restores 0 dB.
+        let back = follow_preamp_db(p, &boosted, &flat).expect("still automatic");
+        assert!(back.abs() < 1e-3, "preamp {back}");
+        // Cuts need no headroom.
+        let mut cut = flat;
+        cut[5] = -9.0;
+        assert_eq!(follow_preamp_db(0.0, &flat, &cut), Some(0.0));
+    }
+
+    #[test]
+    fn hand_set_preamp_is_left_alone() {
+        let flat = [0.0_f32; 10];
+        let mut boosted = flat;
+        boosted[0] = 8.0;
+        assert_eq!(follow_preamp_db(3.0, &flat, &boosted), None);
+        assert_eq!(follow_preamp_db(-2.0, &flat, &boosted), None);
+    }
 
     #[test]
     fn test_builtin_presets() {

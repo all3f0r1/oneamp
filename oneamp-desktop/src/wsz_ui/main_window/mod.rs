@@ -111,6 +111,9 @@ pub enum MainWindowAction {
     /// `replaygain_enabled` in sync (Off ⇒ disabled), and pushes
     /// `SetReplayGainMode` to the engine.
     SetReplayGainMode(oneamp_core::ReplayGainMode),
+    /// Audio → ReplayGain → "Analyze untagged files": measure playlist
+    /// files that carry no ReplayGain tags, in the background.
+    AnalyzeReplayGain,
     /// Toggle stereo→mono downmix (Audio → Mono). The app flips the
     /// persisted flag and pushes `SetMono` to the engine.
     ToggleMono,

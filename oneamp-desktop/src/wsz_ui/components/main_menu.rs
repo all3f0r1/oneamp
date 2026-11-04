@@ -839,6 +839,7 @@ pub fn build_menu_items(ctx: &MenuContext) -> Vec<MenuItem> {
             A::SetReplayGainMode(Rg::Auto),
             ctx.replaygain_mode == Rg::Auto,
         ),
+        MenuItem::action("Analyze untagged files", A::AnalyzeReplayGain).with_separator(),
     ];
 
     let audio_menu = vec![
