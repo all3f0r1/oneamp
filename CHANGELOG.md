@@ -4,6 +4,34 @@ All notable changes to OneAmp are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] — 2026-11-04
+
+### Added
+- ReplayGain analysis of untagged files: Audio → ReplayGain → *Analyze
+  untagged files* measures the playlist's files that carry no ReplayGain
+  tags in the background (EBU R128, −18 LUFS reference; album loudness
+  over the whole album). Figures are stored in `replaygain.json`, never
+  written to the files, and used on the next load.
+- EQ preamp assistance: while the preamp is at its automatic value (flat
+  curve or a built-in preset as applied), boosting a band by hand lowers
+  the preamp to match, so the limiter isn't left doing the EQ's job. A
+  hand-set preamp is left alone.
+
+### Changed
+- ReplayGain Auto in the desktop player: album gain when the track sits
+  next to another track of its album and plays in order, track gain under
+  shuffle or in a mixed playlist (it used album gain everywhere).
+- rubato 5.0.0 → 5.0.1.
+
+### Fixed
+- When the device refuses the track's rate, the resampler's overshoot on
+  full-scale masters is now
+  caught by a lookahead peak guard instead of being clipped by the
+  output. The native-rate path is unchanged.
+- Dependency advisories: rustls-webpki 0.103.16 (RUSTSEC-2026-0382),
+  webpki-roots 1.0.11 (RUSTSEC-2026-0381), ctutils 0.4.8
+  (RUSTSEC-2026-0385).
+
 ## [1.4.0] — 2026-10-19
 
 ### Added

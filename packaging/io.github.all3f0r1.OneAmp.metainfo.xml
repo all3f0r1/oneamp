@@ -69,6 +69,11 @@
   </screenshots>
 
   <releases>
+    <release version="1.4.1" date="2026-11-04">
+      <description>
+        <p>ReplayGain can now measure files that have no ReplayGain tags, and the Auto mode uses album gain only when an album plays in order. Boosting an equalizer band lowers the preamp to match when the preamp is on its automatic setting. On devices that need sample-rate conversion, loud tracks are no longer clipped by the conversion.</p>
+      </description>
+    </release>
     <release version="1.4.0" date="2026-10-19">
       <description>
         <p>Seeking lands on the exact position, including in the last seconds of a track. Resumed tracks start where you left off without playing their beginning. The next track is prepared ahead and joined without a gap. Internet files resume after a dropped connection, surround files are folded down instead of losing channels, and no audio is dropped when the output is busy.</p>
