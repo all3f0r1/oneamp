@@ -91,7 +91,7 @@ Section: sound
 Priority: optional
 Architecture: $ARCH
 Installed-Size: $INSTALLED_SIZE
-Depends: libasound2 (>= 1.0.16), libc6 (>= 2.34), libxkbcommon0, libwayland-client0, libegl1, libgl1, libdbus-1-3, libgtk-3-0
+Depends: libasound2 (>= 1.0.16), libc6 (>= 2.35), libxkbcommon0, libwayland-client0, libegl1, libgl1, libdbus-1-3, libgtk-3-0
 Recommends: pipewire-pulse | pulseaudio, libayatana-appindicator3-1
 Maintainer: $MAINTAINER
 Description: $DESCRIPTION

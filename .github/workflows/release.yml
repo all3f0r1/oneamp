@@ -121,7 +121,7 @@ jobs:
 
   build-linux:
     name: Build Linux x86_64
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # glibc 2.35: oldest supported base; ubuntu-latest (26.04) links GLIBC_2.43
     needs: [test, fmt, clippy]
     steps:
       - uses: actions/checkout@v5
