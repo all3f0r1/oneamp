@@ -69,6 +69,11 @@
   </screenshots>
 
   <releases>
+    <release version="1.4.2" date="2026-11-05">
+      <description>
+        <p>The Linux packages start again on Ubuntu 24.04, Linux Mint 22 and other distributions with glibc older than 2.43. In the web build, settings changes now apply in browsers, and mono and 5.1 sources play on the right speakers.</p>
+      </description>
+    </release>
     <release version="1.4.1" date="2026-11-04">
       <description>
         <p>ReplayGain can now measure files that have no ReplayGain tags, and the Auto mode uses album gain only when an album plays in order. Boosting an equalizer band lowers the preamp to match when the preamp is on its automatic setting. On devices that need sample-rate conversion, loud tracks are no longer clipped by the conversion.</p>

@@ -6,7 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.4.2] — 2026-11-05
+
 ### Fixed
+- Linux: the 1.4.1 tarball and `.deb` would not start on Ubuntu 24.04,
+  Linux Mint 22 and other distributions older than glibc 2.43
+  (`version 'GLIBC_2.43' not found`). Linux release binaries are now
+  built on Ubuntu 22.04 and need glibc 2.35 or newer.
 - Web (AudioWorklet): `setParams` did nothing in browsers.
   `AudioWorkletGlobalScope` has no `TextEncoder`, so the worklet threw on
   every `params` message and nothing reported it. `oneamp.js` now encodes
