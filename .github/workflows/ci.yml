@@ -169,6 +169,13 @@ jobs:
           node -e "const m=new WebAssembly.Module(require('fs').readFileSync('target/wasm32-unknown-unknown/release/oneamp_wasm.wasm')); if (WebAssembly.Module.imports(m).length) { console.error(WebAssembly.Module.imports(m)); process.exit(1) }"
           node oneamp-wasm/www/test-worklet.mjs target/wasm32-unknown-unknown/release/oneamp_wasm.wasm
 
+      - name: WebAssembly processor in Chromium and Firefox
+        working-directory: oneamp-wasm/browser-test
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium firefox
+          node test-browser.mjs ../../target/wasm32-unknown-unknown/release/oneamp_wasm.wasm
+
       - name: Android cross-compilation (aarch64, x86_64)
         run: |
           TC="$ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"

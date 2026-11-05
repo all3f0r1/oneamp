@@ -21,7 +21,15 @@ class OneAmpProcessor extends AudioWorkletProcessor {
     }
     this.outChannels = this.wasm.oneamp_output_channels(this.h);
     this.bindBuffer();
-    this.port.onmessage = (e) => this.onMessage(e.data);
+    // A throwing message handler would otherwise fail silently: report
+    // every failure to the main thread instead.
+    this.port.onmessage = (e) => {
+      try {
+        this.onMessage(e.data);
+      } catch (err) {
+        this.port.postMessage({ type: 'error', message: `${e.data?.type}: ${err?.message ?? err}` });
+      }
+    };
   }
 
   // The view must be rebuilt if wasm memory ever grows (only
@@ -38,6 +46,10 @@ class OneAmpProcessor extends AudioWorkletProcessor {
   onMessage(m) {
     const w = this.wasm;
     const h = this.h;
+    if (h === 0) {
+      if (m.type === 'dispose') return;
+      throw new Error('processor disposed');
+    }
     switch (m.type) {
       case 'eqEnabled': w.oneamp_set_eq_enabled(h, m.on ? 1 : 0); break;
       case 'eqBand': w.oneamp_set_eq_band(h, m.band, m.db); break;
@@ -56,19 +68,32 @@ class OneAmpProcessor extends AudioWorkletProcessor {
         break;
       case 'reset': w.oneamp_reset(h); break;
       case 'params': {
-        const bytes = new TextEncoder().encode(JSON.stringify(m.params));
+        // UTF-8 JSON bytes, encoded on the main thread: TextEncoder does
+        // not exist in AudioWorkletGlobalScope (Chromium, Firefox).
+        // Still allocates inside wasm (scratch buffer + JSON parse): not
+        // for per-block automation; use the typed messages above.
+        const bytes = m.bytes;
+        if (!(bytes instanceof Uint8Array) || bytes.length === 0) {
+          throw new Error('expected non-empty UTF-8 JSON bytes (Uint8Array)');
+        }
         const p = w.oneamp_alloc(bytes.length);
-        new Uint8Array(w.memory.buffer, p, bytes.length).set(bytes);
-        const rc = w.oneamp_set_params_json(h, p, bytes.length);
-        w.oneamp_dealloc(p, bytes.length);
-        this.bindBuffer();
-        if (rc !== 0) this.port.postMessage({ type: 'error', message: 'invalid params' });
+        let rc;
+        try {
+          new Uint8Array(w.memory.buffer, p, bytes.length).set(bytes);
+          rc = w.oneamp_set_params_json(h, p, bytes.length);
+        } finally {
+          w.oneamp_dealloc(p, bytes.length);
+          this.bindBuffer();
+        }
+        if (rc !== 0) throw new Error(`oneamp_set_params_json returned ${rc} (invalid DspParams JSON)`);
         break;
       }
       case 'dispose':
         w.oneamp_free(h);
         this.h = 0;
         break;
+      default:
+        throw new Error('unknown message type');
     }
   }
 

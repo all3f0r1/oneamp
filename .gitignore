@@ -1,5 +1,8 @@
 # Rust
 /target/
+
+# Browser test dependencies (npm ci)
+/oneamp-wasm/browser-test/node_modules/
 **/*.rs.bk
 **/*.rs.bak
 *.pdb

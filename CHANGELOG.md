@@ -4,6 +4,32 @@ All notable changes to OneAmp are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- Web (AudioWorklet): `setParams` did nothing in browsers.
+  `AudioWorkletGlobalScope` has no `TextEncoder`, so the worklet threw on
+  every `params` message and nothing reported it. `oneamp.js` now encodes
+  the JSON on the main thread and transfers a `Uint8Array`. Applying it
+  still allocates inside wasm: keep `setParams` for occasional changes
+  and use the typed setters for anything continuous.
+- Web: a mono source played on the left channel only, and a 5.1 source
+  lost its centre. The node now uses `channelInterpretation: 'speakers'`.
+
+### Changed
+- Web: processor errors are reported instead of being dropped. A failing
+  message (an invalid `DspParams`, `oneamp_set_params_json` returning
+  non-zero, an unknown type, a message after `dispose`) is posted as
+  `{ type: 'error', message }` and delivered to the new `onError` option
+  of `createOneAmpNode`. The `params` message now carries
+  `bytes: Uint8Array` instead of `params: object`.
+
+### Added
+- Browser test (`oneamp-wasm/browser-test/`, Playwright, Chromium and
+  Firefox, in CI): checks the rendered audio for the transparent delay,
+  the typed setters, `setParams`, error reporting, and mono and 5.1
+  centre mixing.
+
 ## [1.4.1] — 2026-11-04
 
 ### Added

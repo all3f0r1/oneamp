@@ -1,0 +1,12 @@
+{
+  "name": "oneamp-wasm-browser-test",
+  "private": true,
+  "type": "module",
+  "description": "Runs the oneamp-wasm AudioWorklet in Chromium and Firefox and checks the rendered audio",
+  "scripts": {
+    "test": "node test-browser.mjs ../../target/wasm32-unknown-unknown/release/oneamp_wasm.wasm"
+  },
+  "devDependencies": {
+    "playwright-core": "1.64.1"
+  }
+}

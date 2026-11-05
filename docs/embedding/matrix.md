@@ -69,7 +69,7 @@ local HTTP server, not a real device or network.
 | settings JSON (versioning, migration, sanitizing) | T `settings::tests::*` | — |
 | desktop app on the new API | C + T (78 desktop unit tests); R launched in Xephyr, played a file | GUI flows not re-tested by hand beyond launch + play |
 | CLI on the new API (no skins/tags/desktop deps) | C; R `remote_playback` example (same engine) | CLI itself not run against a device |
-| WebAssembly module | C `embedding` (wasm32 build, zero imports); T `test-worklet.mjs` in Node | not run in a browser |
+| WebAssembly module | C `embedding` (wasm32 build, zero imports); T `test-worklet.mjs` in Node; T `browser-test/test-browser.mjs` in Chromium + Firefox (`OfflineAudioContext`) | not run in Safari/WebKit or on a live `AudioContext`; `setParams` allocates in wasm |
 | Android bridge | C `embedding` (aarch64 + x86_64 Android, JNI export count); T `wire` unit tests; R+CI Kotlin example on a desktop JVM (processor, player, file, HTTP via `AccessCallback`) | **not run on ART, emulator or device** |
 | macOS / Windows | C `cross-platform-check` (`cargo check --all --all-targets`, lib tests) | engine integration tests run on Linux only |
 
